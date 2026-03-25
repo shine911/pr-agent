@@ -15,6 +15,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -34,12 +37,11 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          # Ngữ cảnh build vẫn là thư mục gốc để Docker có thể copy các file source code
-          context: . 
-          # Đường dẫn cụ thể đến Dockerfile của bạn
-          file: ./docker/Dockerfile 
+          context: .
+          file: ./docker/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Bây giờ các dòng cache này sẽ hoạt động mượt mà
           cache-from: type=gha
           cache-to: type=gha,mode=max
