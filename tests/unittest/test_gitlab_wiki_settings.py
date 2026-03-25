@@ -77,5 +77,5 @@ class TestGitLabWikiSettings:
              }.get(key, default)
              
              settings = gitlab_provider.get_repo_settings()
-             assert settings == ""
+             assert settings == b""
              mock_project.wikis.get.assert_not_called()
