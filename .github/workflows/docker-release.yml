@@ -1,4 +1,5 @@
 name: Build and Push Docker Image on Release
+
 on:
   release:
     types: [published]
@@ -26,8 +27,6 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
-          # Tự động lấy Tag từ GitHub Release (ví dụ: 0.32-custom.v1)
-          # Và đồng thời gắn thêm tag 'latest' cho bản mới nhất
           tags: |
             type=ref,event=tag
             type=raw,value=latest
@@ -35,10 +34,12 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          # Ngữ cảnh build vẫn là thư mục gốc để Docker có thể copy các file source code
+          context: . 
+          # Đường dẫn cụ thể đến Dockerfile của bạn
+          file: ./docker/Dockerfile 
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Tối ưu hóa build layer cache để các lần build sau nhanh hơn
           cache-from: type=gha
           cache-to: type=gha,mode=max
