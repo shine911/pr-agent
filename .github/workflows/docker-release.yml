@@ -15,9 +15,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+      # Đăng nhập vào GitHub Container Registry
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -25,6 +23,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Tự động lấy tag từ tên Release (ví dụ: 0.32-custom.v1)
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -34,6 +33,7 @@ jobs:
             type=ref,event=tag
             type=raw,value=latest
 
+      # Build và Push (Đã loại bỏ hoàn toàn phần cache)
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -42,6 +42,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Bây giờ các dòng cache này sẽ hoạt động mượt mà
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
