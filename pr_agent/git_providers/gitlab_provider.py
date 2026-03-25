@@ -791,17 +791,10 @@ class GitLabProvider(GitProvider):
 
     def get_repo_settings(self):
         contents = ""
-        # 1. Try from the main project
-        try:
-            project = self.gl.projects.get(self.id_project)
-            main_branch = project.default_branch
-            contents = project.files.get(file_path='.pr_agent.toml', ref=main_branch).decode()
-        except Exception:
-            pass
-
-        # 2. Try from the wiki project
-        if not contents and get_settings().config.get("use_wiki_settings_file", True):
+        # 1. Try from the wiki project
+        if get_settings().config.get("use_wiki_settings_file", True):
             try:
+                get_logger().info("Attempting to fetch settings from wiki...")
                 # For GitLab, we can access wikis through the main project object
                 # Attempt to get the '.pr_agent.toml' page
                 wiki_project_id = get_settings().get("GITLAB.WIKI_PROJECT_ID", self.id_project)
@@ -819,6 +812,15 @@ class GitLabProvider(GitProvider):
                     contents = self._extract_toml_from_markdown(wiki_page.content)
             except Exception as e:
                 get_logger().warning(f"Failed to fetch settings from wiki: {e}")
+        # 2. Try from the main project
+        if not contents:
+            try:
+                get_logger().info("Attempting to fetch settings from .pr_agent.toml...")
+                project = self.gl.projects.get(self.id_project)
+                main_branch = project.default_branch
+                contents = project.files.get(file_path='.pr_agent.toml', ref=main_branch).decode()
+            except Exception:
+                pass
 
         return contents.encode() if isinstance(contents, str) else contents
 
