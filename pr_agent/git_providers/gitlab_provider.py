@@ -786,6 +786,60 @@ class GitLabProvider(GitProvider):
     def get_pr_description_full(self):
         return self.mr.description
 
+    def get_conversation_history(self) -> list:
+        """Return MR notes that @-mention the bot, sorted oldest-first, for history context injection.
+
+        Reads all notes from the current MR, filters to those that mention the bot's username,
+        excludes notes written by the bot itself, and caps the result at
+        ``GITLAB.HISTORY_CONTEXT_MAX_COMMENTS`` entries.
+
+        Returns:
+            list[dict]: Each entry has keys ``author`` (str), ``body`` (str), and ``created_at`` (str).
+                        Returns an empty list when the feature is disabled or an error occurs.
+        """
+        if not get_settings().get("GITLAB.ENABLE_HISTORY_CONTEXT", False):
+            return []
+
+        try:
+            # Resolve and cache the bot username (one auth call per provider instance)
+            if not hasattr(self, "_bot_username") or not self._bot_username:
+                self.gl.auth()
+                self._bot_username = self.gl.user.username if self.gl.user else ""
+            bot_username = self._bot_username
+
+            max_comments = int(get_settings().get("GITLAB.HISTORY_CONTEXT_MAX_COMMENTS", 20))
+
+            notes = self.mr.notes.list(get_all=True)
+            # Sort oldest first so the LLM sees the conversation in chronological order
+            notes_sorted = sorted(notes, key=lambda n: n.created_at)
+
+            history = []
+            for note in notes_sorted:
+                author = note.author.get("username", "") if isinstance(note.author, dict) else ""
+                body = note.body or ""
+
+                # Skip notes by the bot itself and notes that don't mention the bot
+                if author == bot_username:
+                    continue
+                if bot_username and f"@{bot_username}" not in body:
+                    continue
+
+                history.append({
+                    "author": author,
+                    "body": body.strip(),
+                    "created_at": str(note.created_at),
+                })
+
+                if len(history) >= max_comments:
+                    break
+
+            get_logger().debug(f"GitLab history context: {len(history)} note(s) collected for MR {self.id_mr}")
+            return history
+
+        except Exception as e:
+            get_logger().warning(f"Failed to collect GitLab conversation history, error: {e}")
+            return []
+
     def get_issue_comments(self):
         return self.mr.notes.list(get_all=True)[::-1]
 

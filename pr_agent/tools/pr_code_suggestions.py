@@ -28,6 +28,7 @@ from pr_agent.git_providers.git_provider import get_main_pr_language, GitProvide
 from pr_agent.log import get_logger
 from pr_agent.servers.help import HelpMessage
 from pr_agent.tools.pr_description import insert_br_after_x_chars
+from pr_agent.tools.pr_reviewer import _get_gitlab_history_context
 
 
 class PRCodeSuggestions:
@@ -72,6 +73,7 @@ class PRCodeSuggestions:
             "focus_only_on_problems": get_settings().get("pr_code_suggestions.focus_only_on_problems", False),
             "date": datetime.now().strftime('%Y-%m-%d'),
             'duplicate_prompt_examples': get_settings().config.get('duplicate_prompt_examples', False),
+            "conversation_history": _get_gitlab_history_context(self.git_provider),
         }
 
         if get_settings().pr_code_suggestions.get("decouple_hunks", True):

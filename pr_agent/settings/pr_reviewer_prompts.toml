@@ -240,6 +240,17 @@ Ticket Requirements:
 {% endfor %}
 {%- endif %}
 
+{%- if conversation_history %}
+
+--Conversation History--
+The following are previous user comments that mentioned the bot in this MR.
+Use them as additional context when performing your review:
+{%- for entry in conversation_history %}
+- @{{ entry.author }} said: "{{ entry.body }}"
+{%- endfor %}
+======
+{%- endif %}
+
 
 --PR Info--
 {%- if date %}
