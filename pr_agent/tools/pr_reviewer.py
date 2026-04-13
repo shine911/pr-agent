@@ -27,6 +27,23 @@ from pr_agent.tools.ticket_pr_compliance_check import (
     extract_and_cache_pr_tickets, extract_tickets)
 
 
+def _get_gitlab_history_context(git_provider) -> list:
+    """Fetch GitLab MR conversation history for use as LLM prompt context.
+
+    Returns an empty list when the feature is disabled, the provider does not
+    support it, or any error occurs — so callers never need to guard against None.
+    """
+    if not get_settings().get("GITLAB.ENABLE_HISTORY_CONTEXT", False):
+        return []
+    if not hasattr(git_provider, "get_conversation_history"):
+        return []
+    try:
+        return git_provider.get_conversation_history()
+    except Exception as e:
+        get_logger().warning(f"Failed to get GitLab conversation history: {e}")
+        return []
+
+
 class PRReviewer:
     """
     The PRReviewer class is responsible for reviewing a pull request and generating feedback using an AI model.
@@ -99,6 +116,7 @@ class PRReviewer:
             "related_tickets": get_settings().get('related_tickets', []),
             'duplicate_prompt_examples': get_settings().config.get('duplicate_prompt_examples', False),
             "date": datetime.datetime.now().strftime('%Y-%m-%d'),
+            "conversation_history": _get_gitlab_history_context(self.git_provider),
         }
 
         self.token_handler = TokenHandler(

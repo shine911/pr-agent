@@ -350,6 +350,12 @@ class GitProvider(ABC):
     def get_issue_comments(self):
         pass
 
+    def get_conversation_history(self) -> list:
+        """Return filtered MR/PR comment history for context injection into LLM prompts.
+        Providers that support this feature (e.g. GitLabProvider) should override this method.
+        """
+        return []
+
     def get_comment_url(self, comment) -> str:
         return ""
 

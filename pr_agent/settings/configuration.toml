@@ -269,6 +269,10 @@ push_commands = [
 ]
 # Configure SSL validation for GitLab. Can be either set to the path of a custom CA or disabled entirely.
 # ssl_verify = true
+# History context: inject MR conversation history into LLM prompts for /review and /improve.
+# Only comments that @-mention the bot are included; comments by the bot itself are excluded.
+# enable_history_context = false
+# history_context_max_comments = 20
 
 [gitea]
 url = "https://gitea.com"

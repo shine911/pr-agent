@@ -1,3 +1,10 @@
+## 2026-04-13
+
+### Enhanced
+
+- Add history context support for gitlab
+
+
 ## 2023-08-03
 
 ### Optimized

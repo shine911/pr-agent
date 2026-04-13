@@ -126,7 +126,18 @@ code_suggestions:
 Each YAML output MUST be after a newline, indented, with block scalar indicator ('|').
 """
 
-user="""--PR Info--
+user="""
+{%- if conversation_history %}
+--Conversation History--
+The following are previous user comments that mentioned the bot in this MR.
+Use them as additional context when generating code suggestions:
+{%- for entry in conversation_history %}
+- @{{ entry.author }} said: "{{ entry.body }}"
+{%- endfor %}
+======
+
+{%- endif %}
+--PR Info--
 
 Title: '{{title}}'
 
