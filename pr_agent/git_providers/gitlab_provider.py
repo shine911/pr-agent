@@ -807,7 +807,7 @@ class GitLabProvider(GitProvider):
                 self._bot_username = self.gl.user.username if self.gl.user else ""
             bot_username = self._bot_username
 
-            max_comments = int(get_settings().get("GITLAB.HISTORY_CONTEXT_MAX_COMMENTS", 20))
+            max_comments = int(get_settings().get("GITLAB.HISTORY_CONTEXT_MAX_COMMENTS", -1))
 
             notes = self.mr.notes.list(get_all=True)
             # Sort oldest first so the LLM sees the conversation in chronological order
@@ -829,8 +829,7 @@ class GitLabProvider(GitProvider):
                     "body": body.strip(),
                     "created_at": str(note.created_at),
                 })
-
-                if len(history) >= max_comments:
+                if (max_comments >= 0 and len(history) >= max_comments):
                     break
 
             get_logger().debug(f"GitLab history context: {len(history)} note(s) collected for MR {self.id_mr}")
