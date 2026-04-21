@@ -1505,3 +1505,29 @@ def format_todo_items(value: list[TodoItem] | TodoItem, git_provider, gfm_suppor
         else:
             markdown_text += f"- {format_todo_item(value, git_provider, gfm_supported)}\n"
     return markdown_text
+
+def get_repo_metadata_context_str(extra_instructions: str = "", git_provider=None) -> str:
+    """
+    Retrieves the repository metadata from the context and appends it to the extra instructions.
+    """
+    try:
+        get_logger().info("Getting repository metadata from wiki pages")
+        if (git_provider is None):
+            get_logger().warning("Git provider is not provided, cannot get repository metadata")
+            return extra_instructions or ""
+        repo_metadata = git_provider.get_repo_metadata()
+        repo_metadata_str = ""
+        if isinstance(repo_metadata, dict):
+            for file_name, file_content in repo_metadata.items():
+                if file_content:
+                    get_logger().info(f"Adding metadata for file {file_name} to context")
+                    repo_metadata_str += f"\n\n--- Content from {file_name} ---\n{file_content}\n"
+        
+        if repo_metadata_str:
+            get_logger().info("Successfully retrieved repository metadata from context")
+            return (extra_instructions or "") + "\n\nRepository Metadata Context:" + repo_metadata_str
+        get_logger().info("No repository metadata found")
+        return extra_instructions or ""
+    except Exception as e:
+        get_logger().warning(f"Failed to get repository metadata: {e}")
+        return extra_instructions or ""

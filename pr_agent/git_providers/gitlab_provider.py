@@ -877,6 +877,68 @@ class GitLabProvider(GitProvider):
 
         return contents.encode() if isinstance(contents, str) else contents
 
+    def get_repo_metadata(self) -> dict:
+        """Fetch additional repository metadata files.
+
+        Behavior:
+        - If the repository config `add_repo_metadata` is truthy, attempt to fetch files listed
+          in `config.add_repo_metadata_file_list` or a sensible default.
+        - For GitLab, prefer wiki pages (project.wikis) over repository files when available.
+
+        Returns a dict mapping filename -> content (str)."""
+        metadata: dict = {}
+        get_logger().info("add_repo_metadata enabled: starting to fetch repository metadata (wiki-first)")
+
+        # determine filenames to look for
+        files_list = get_settings().config.get("add_repo_metadata_file_list", ["AGENTS.MD", "QODO.MD", "CLAUDE.MD", "CONTEXT.MD", "README.MD"])
+
+        # Attempt to fetch from wiki pages first
+        try:
+            wiki_project_id = get_settings().get("GITLAB.WIKI_PROJECT_ID", self.id_project)
+            project = self.gl.projects.get(wiki_project_id)
+            for fname in files_list:
+                content = None
+                try:
+                    page = project.wikis.get(fname.lower())
+                    if page:
+                        content = page.content
+                except Exception:
+                    get_logger().info(f"Wiki page '{fname}' not found")
+                if content:
+                    get_logger().info(f"Fetched '{fname}' from wiki")
+                    metadata[fname] = content
+        except Exception as e:
+            get_logger().debug(f"Wiki fetch for repo metadata failed or not available: {e}")
+
+        # Fallback to repository files if not found in wiki
+        try:
+            project = self.gl.projects.get(self.id_project)
+            main_branch = project.default_branch
+            for fname in files_list:
+                if fname in metadata:
+                    continue
+                try:
+                    file_obj = project.files.get(file_path=fname, ref=main_branch)
+                    txt = None
+                    try:
+                        txt = file_obj.decode()
+                    except Exception:
+                        txt = getattr(file_obj, 'content', None)
+                        if txt:
+                            import base64
+                            try:
+                                txt = base64.b64decode(txt).decode('utf-8', 'ignore')
+                            except Exception:
+                                txt = None
+                    if txt:
+                        metadata[fname] = txt
+                except Exception:
+                    continue
+        except Exception as e:
+            get_logger().debug(f"Repository fetch for repo metadata failed: {e}")
+
+        return metadata
+
     def _extract_toml_from_markdown(self, content: str) -> str:
         if not content:
             return ""

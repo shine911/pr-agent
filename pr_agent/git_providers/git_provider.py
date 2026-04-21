@@ -274,6 +274,13 @@ class GitProvider(ABC):
     def get_repo_settings(self):
         pass
 
+    def get_repo_metadata(self) -> dict:
+        """Return a mapping of repository metadata filenames to their contents.
+        By default returns an empty dict. Providers may override to fetch files
+        from repo root or other sources (wiki pages, etc.).
+        """
+        return {}
+
     def get_workspace_name(self):
         return ""
 

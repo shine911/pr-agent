@@ -9,7 +9,7 @@ from pr_agent.algo.ai_handlers.base_ai_handler import BaseAiHandler
 from pr_agent.algo.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
 from pr_agent.algo.pr_processing import get_pr_diff, retry_with_fallback_models
 from pr_agent.algo.token_handler import TokenHandler
-from pr_agent.algo.utils import get_user_labels, load_yaml, set_custom_labels
+from pr_agent.algo.utils import get_user_labels, load_yaml, set_custom_labels, get_repo_metadata_context_str
 from pr_agent.config_loader import get_settings
 from pr_agent.git_providers import get_git_provider
 from pr_agent.git_providers.git_provider import get_main_pr_language
@@ -44,7 +44,7 @@ class PRGenerateLabels:
             "description": self.git_provider.get_pr_description(full=False),
             "language": self.main_pr_language,
             "diff": "",  # empty diff for initial calculation
-            "extra_instructions": get_settings().pr_description.extra_instructions,
+            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_description.extra_instructions, self.git_provider),
             "commit_messages_str": self.git_provider.get_commit_messages(),
             "enable_custom_labels": get_settings().config.enable_custom_labels,
             "custom_labels_class": "",  # will be filled if necessary in 'set_custom_labels' function

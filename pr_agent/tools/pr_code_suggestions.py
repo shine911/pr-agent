@@ -19,7 +19,8 @@ from pr_agent.algo.pr_processing import (add_ai_metadata_to_diff_files,
                                          retry_with_fallback_models)
 from pr_agent.algo.token_handler import TokenHandler
 from pr_agent.algo.utils import (ModelType, load_yaml, replace_code_tags,
-                                 show_relevant_configurations, get_max_tokens, clip_tokens, get_model)
+                                 show_relevant_configurations, get_max_tokens, clip_tokens, get_model,
+                                 get_repo_metadata_context_str)
 from pr_agent.config_loader import get_settings
 from pr_agent.git_providers import (AzureDevopsProvider, GithubProvider,
                                     GitLabProvider, get_git_provider,
@@ -66,7 +67,7 @@ class PRCodeSuggestions:
             "diff": "",  # empty diff for initial calculation
             "diff_no_line_numbers": "",  # empty diff for initial calculation
             "num_code_suggestions": num_code_suggestions,
-            "extra_instructions": get_settings().pr_code_suggestions.extra_instructions,
+            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_code_suggestions.extra_instructions, self.git_provider),
             "commit_messages_str": self.git_provider.get_commit_messages(),
             "relevant_best_practices": "",
             "is_ai_metadata": get_settings().get("config.enable_ai_metadata", False),
