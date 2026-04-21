@@ -15,7 +15,8 @@ from pr_agent.algo.pr_processing import (add_ai_metadata_to_diff_files,
 from pr_agent.algo.token_handler import TokenHandler
 from pr_agent.algo.utils import (ModelType, PRReviewHeader,
                                  convert_to_markdown_v2, github_action_output,
-                                 load_yaml, show_relevant_configurations)
+                                 load_yaml, show_relevant_configurations,
+                                 get_repo_metadata_context_str)
 from pr_agent.config_loader import get_settings
 from pr_agent.git_providers import (get_git_provider,
                                     get_git_provider_with_context)
@@ -108,7 +109,7 @@ class PRReviewer:
             'require_todo_scan': get_settings().pr_reviewer.get("require_todo_scan", False),
             'question_str': question_str,
             'answer_str': answer_str,
-            "extra_instructions": get_settings().pr_reviewer.extra_instructions,
+            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_reviewer.extra_instructions, self.git_provider),
             "commit_messages_str": self.git_provider.get_commit_messages(),
             "custom_labels": "",
             "enable_custom_labels": get_settings().config.enable_custom_labels,

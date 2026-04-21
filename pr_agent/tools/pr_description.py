@@ -18,7 +18,8 @@ from pr_agent.algo.token_handler import TokenHandler
 from pr_agent.algo.utils import (ModelType, PRDescriptionHeader, clip_tokens,
                                  get_max_tokens, get_user_labels, load_yaml,
                                  set_custom_labels,
-                                 show_relevant_configurations)
+                                 show_relevant_configurations,
+                                 get_repo_metadata_context_str)
 from pr_agent.config_loader import get_settings
 from pr_agent.git_providers import (GithubProvider, get_git_provider,
                                     get_git_provider_with_context)
@@ -66,7 +67,7 @@ class PRDescription:
             "description": self.git_provider.get_pr_description(full=False),
             "language": self.main_pr_language,
             "diff": "",  # empty diff for initial calculation
-            "extra_instructions": get_settings().pr_description.extra_instructions,
+            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_description.extra_instructions, self.git_provider),
             "commit_messages_str": self.git_provider.get_commit_messages(),
             "enable_custom_labels": get_settings().config.enable_custom_labels,
             "custom_labels_class": "",  # will be filled if necessary in 'set_custom_labels' function

@@ -9,7 +9,7 @@ from pr_agent.algo.ai_handlers.base_ai_handler import BaseAiHandler
 from pr_agent.algo.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
 from pr_agent.algo.pr_processing import get_pr_diff, retry_with_fallback_models
 from pr_agent.algo.token_handler import TokenHandler
-from pr_agent.algo.utils import load_yaml
+from pr_agent.algo.utils import load_yaml, get_repo_metadata_context_str
 from pr_agent.config_loader import get_settings
 from pr_agent.git_providers import get_git_provider
 from pr_agent.git_providers.git_provider import get_main_pr_language
@@ -37,7 +37,7 @@ class PRAddDocs:
             "description": self.git_provider.get_pr_description(),
             "language": self.main_language,
             "diff": "",  # empty diff for initial calculation
-            "extra_instructions": get_settings().pr_add_docs.extra_instructions,
+            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_add_docs.extra_instructions, self.git_provider),
             "commit_messages_str": self.git_provider.get_commit_messages(),
             'docs_for_language': get_docs_for_language(self.main_language,
                                                        get_settings().pr_add_docs.docs_style),
