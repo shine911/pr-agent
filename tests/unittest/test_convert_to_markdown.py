@@ -55,14 +55,14 @@ class TestConvertToMarkdown:
         expected_output = textwrap.dedent(f"""\
             {PRReviewHeader.REGULAR.value} 🔍
 
-            Here are some key observations to aid the review process:
+            Đây là một số quan sát chính giúp hỗ trợ quá trình đánh giá:
 
             <table>
-            <tr><td>⏱️&nbsp;<strong>Estimated effort to review</strong>: 1 🔵⚪⚪⚪⚪</td></tr>
-            <tr><td>🧪&nbsp;<strong>No relevant tests</strong></td></tr>
+            <tr><td>⏱️&nbsp;<strong>Công sức ước tính để đánh giá</strong>: 1 🔵⚪⚪⚪⚪</td></tr>
+            <tr><td>🧪&nbsp;<strong>Không có test liên quan</strong></td></tr>
             <tr><td>&nbsp;<strong>Possible issues</strong>: No
             </td></tr>
-            <tr><td>🔒&nbsp;<strong>No security concerns identified</strong></td></tr>
+            <tr><td>🔒&nbsp;<strong>Không phát hiện vấn đề bảo mật</strong></td></tr>
             </table>
         """)
 
@@ -76,16 +76,16 @@ class TestConvertToMarkdown:
         expected_output = textwrap.dedent("""\
             ## PR Reviewer Guide 🔍
 
-            Here are some key observations to aid the review process:
+            Đây là một số quan sát chính giúp hỗ trợ quá trình đánh giá:
 
-            ### ⏱️ Estimated effort to review: 1 🔵⚪⚪⚪⚪
+            ### ⏱️ Công sức ước tính để đánh giá: 1 🔵⚪⚪⚪⚪
 
-            ### 🧪 No relevant tests
+            ### 🧪 Không có test liên quan
 
             ###  Possible issues: No
 
 
-            ### 🔒 No security concerns identified
+            ### 🔒 Không phát hiện vấn đề bảo mật
         """)
 
         assert convert_to_markdown_v2(input_data, gfm_supported=False).strip() == expected_output.strip()
@@ -109,10 +109,10 @@ class TestConvertToMarkdown:
         expected_output = textwrap.dedent(f"""\
             ## PR Reviewer Guide 🔍
 
-            Here are some key observations to aid the review process:
+            Đây là một số quan sát chính giúp hỗ trợ quá trình đánh giá:
 
             <table>
-            <tr><td>⚡&nbsp;<strong>Recommended focus areas for review</strong><br><br>
+            <tr><td>⚡&nbsp;<strong>Khu vực đề xuất tập trung đánh giá</strong><br><br>
 
             <a href='{reference_link}'><strong>Code Smell</strong></a><br>The function is too long and complex.
 
@@ -139,18 +139,18 @@ class TestConvertToMarkdown:
         expected_output = textwrap.dedent("""\
             ## PR Reviewer Guide 🔍
 
-            Here are some key observations to aid the review process:
+            Đây là một số quan sát chính giúp hỗ trợ quá trình đánh giá:
 
             <table>
             <tr><td>
 
-            **🎫 Ticket compliance analysis ✅**
+            **🎫 Phân tích tuân thủ ticket ✅**
 
 
 
-            **[123](https://example.com/ticket/123) - Fully compliant**
+            **[123](https://example.com/ticket/123) - Tuân thủ đầy đủ**
 
-            Compliant requirements:
+            Yêu cầu đã tuân thủ:
 
             - Requirement 1
             - Requirement 2
@@ -186,17 +186,17 @@ class TestConvertToMarkdown:
         expected_output = textwrap.dedent("""\
             ## PR Reviewer Guide 🔍
 
-            Here are some key observations to aid the review process:
+            Đây là một số quan sát chính giúp hỗ trợ quá trình đánh giá:
 
             <table>
-            <tr><td>🔀 <strong>Multiple PR themes</strong><br><br>
+            <tr><td>🔀 <strong>Nhiều chủ đề PR</strong><br><br>
 
             <details><summary>
-            Sub-PR theme: <b>Refactoring</b></summary>
+            Chủ đề Sub-PR: <b>Refactoring</b></summary>
 
             ___
 
-            Relevant files:
+            Các file liên quan:
 
             - src/file1.py
             - src/file2.py
@@ -205,11 +205,11 @@ class TestConvertToMarkdown:
             </details>
 
             <details><summary>
-            Sub-PR theme: <b>Bug Fix</b></summary>
+            Chủ đề Sub-PR: <b>Bug Fix</b></summary>
 
             ___
 
-            Relevant files:
+            Các file liên quan:
 
             - src/file3.py
             ___
@@ -236,10 +236,10 @@ class TestConvertToMarkdown:
         expected_output = textwrap.dedent(f"""
             {PRReviewHeader.REGULAR.value} 🔍
 
-            Here are some key observations to aid the review process:
+            Đây là một số quan sát chính giúp hỗ trợ quá trình đánh giá:
 
             <table>
-            <tr><td>⏳&nbsp;<strong>Contribution time estimate</strong> (best, average, worst case): 1h | 2h | 30 minutes</td></tr>
+            <tr><td>⏳&nbsp;<strong>Ước tính thời gian đóng góp</strong> (tốt nhất, trung bình, xấu nhất): 1h | 2h | 30 phút</td></tr>
             </table>
         """)
         assert convert_to_markdown_v2(input_data).strip() == expected_output.strip()
@@ -248,9 +248,9 @@ class TestConvertToMarkdown:
         expected_output_no_gfm = textwrap.dedent(f"""
         {PRReviewHeader.REGULAR.value} 🔍
 
-        Here are some key observations to aid the review process:
+        Đây là một số quan sát chính giúp hỗ trợ quá trình đánh giá:
 
-        ### ⏳ Contribution time estimate (best, average, worst case): 1h | 2h | 30 minutes
+        ### ⏳ Ước tính thời gian đóng góp (tốt nhất, trung bình, xấu nhất): 1h | 2h | 30 phút
 
         """)
         assert convert_to_markdown_v2(input_data, gfm_supported=False).strip() == expected_output_no_gfm.strip()

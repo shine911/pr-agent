@@ -119,9 +119,9 @@ class TestPreparePrAnswer:
             git_provider=MagicMock(),  # not GitLab
         )
         out = pr._prepare_pr_answer()
-        assert "### **Ask**❓" in out
+        assert "### **Hỏi**❓" in out
         assert "why?" in out
-        assert "### **Answer:**" in out
+        assert "### **Trả lời:**" in out
         assert "because reasons" in out
 
     def test_sanitizes_leading_slash(self):
@@ -169,7 +169,7 @@ class TestPreparePrAnswer:
             git_provider=gitlab_provider,
         )
         out = pr._prepare_pr_answer()
-        assert "Model answer contains GitHub quick actions" in out
+        assert "Câu trả lời của model chứa các quick action của GitHub" in out
 
     def test_gitlab_provider_passes_through_safe_text(self):
         gitlab_provider = GitLabProvider.__new__(GitLabProvider)
@@ -196,7 +196,7 @@ class TestGitlabProtections:
     def test_detects_each_quick_action(self, quick_action):
         pr = _make_pr_questions()
         result = pr.gitlab_protections(f"prefix {quick_action} suffix")
-        assert "GitHub quick actions" in result
+        assert "quick action của GitHub" in result
 
     def test_passthrough_for_safe_text(self):
         pr = _make_pr_questions()

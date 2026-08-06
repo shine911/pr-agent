@@ -90,7 +90,7 @@ def test_apply_repo_settings_attributes_global_error_and_still_applies_local(mon
         assert settings.pr_reviewer.extra_instructions == "local-applied"
         # One error comment, attributed to global, with the global content redacted (not echoed).
         assert len(provider.comments) == 1
-        assert "global `pr-agent-settings` settings repository" in provider.comments[0]
+        assert "repository cấu hình toàn cục `pr-agent-settings`" in provider.comments[0]
         assert "unclosed_section" not in provider.comments[0]
     finally:
         settings.pr_reviewer.extra_instructions = original_extra_instructions
@@ -107,13 +107,13 @@ def test_handle_configurations_errors_uses_persistent_comment_when_supported():
 
     assert len(provider.persistent_comments) == 1
     comment = provider.persistent_comments[0]
-    assert comment["initial_header"] == "❌ **PR-Agent failed to apply 'local' repo settings**"
+    assert comment["initial_header"] == "❌ **PR-Agent không thể áp dụng cấu hình repo 'local'**"
     assert comment["update_header"] is False
     assert comment["final_update_message"] is False
-    assert "PR-Agent failed to apply 'local' repo settings" in comment["body"]
+    assert "PR-Agent không thể áp dụng cấu hình repo 'local'" in comment["body"]
     assert "Invalid value" in comment["body"]
     assert "```toml\n[config]\nmodel =\n```" in comment["body"]
-    assert "<details><summary>Configuration content:</summary>" in comment["body"]
+    assert "<details><summary>Nội dung cấu hình:</summary>" in comment["body"]
 
 
 def test_handle_configurations_errors_keeps_markdown_details_when_persistent_comment_is_missing():
@@ -126,10 +126,10 @@ def test_handle_configurations_errors_keeps_markdown_details_when_persistent_com
     }], provider)
 
     assert len(provider.comments) == 1
-    assert "PR-Agent failed to apply 'local' repo settings" in provider.comments[0]
+    assert "PR-Agent không thể áp dụng cấu hình repo 'local'" in provider.comments[0]
     assert "Invalid value" in provider.comments[0]
     assert "```toml\n[config]\nmodel =\n```" in provider.comments[0]
-    assert "<details><summary>Configuration content:</summary>" in provider.comments[0]
+    assert "<details><summary>Nội dung cấu hình:</summary>" in provider.comments[0]
 
 
 def test_handle_configurations_errors_uses_plain_comment_without_markdown_support():
@@ -142,7 +142,7 @@ def test_handle_configurations_errors_uses_plain_comment_without_markdown_suppor
     }], provider)
 
     assert len(provider.comments) == 1
-    assert "❌ **PR-Agent failed to apply 'local' repo settings**" in provider.comments[0]
+    assert "❌ **PR-Agent không thể áp dụng cấu hình repo 'local'**" in provider.comments[0]
     assert "Invalid value" in provider.comments[0]
     assert "```toml\n[config]\nmodel =\n```" in provider.comments[0]
     assert "<details>" not in provider.comments[0]
@@ -176,7 +176,7 @@ def test_handle_configurations_errors_publishes_each_error():
     assert "First error" in provider.comments[0]
     assert "[config]\nmodel =" in provider.comments[0]
     assert "Second error" in provider.comments[1]
-    assert "global `pr-agent-settings` settings repository" in provider.comments[1]
+    assert "repository cấu hình toàn cục `pr-agent-settings`" in provider.comments[1]
     assert "dummy-value" not in provider.comments[1]
     assert "num_max_findings" not in provider.comments[1]
 

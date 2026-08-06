@@ -16,10 +16,10 @@ setup_logger(log_level)
 
 
 def set_parser():
-    parser = argparse.ArgumentParser(description='AI based pull request analyzer', usage=
+    parser = argparse.ArgumentParser(description='Công cụ phân tích pull request dùng AI', usage=
     """\
-    Usage: cli.py --pr_url=<URL on supported git hosting service> <command> [<args>].
-    For example:
+    Cách dùng: cli.py --pr_url=<URL trên dịch vụ git được hỗ trợ> <command> [<args>].
+    Ví dụ:
     - cli.py --pr_url=... review
     - cli.py --pr_url=... describe
     - cli.py --pr_url=... improve
@@ -28,54 +28,54 @@ def set_parser():
     - cli.py --issue_url=... similar_issue
     - cli.py --pr_url/--issue_url= help_docs [<asked question>]
 
-    Supported commands:
-    - review / review_pr - Add a review that includes a summary of the PR and specific suggestions for improvement.
+    Các lệnh được hỗ trợ:
+    - review / review_pr - Thêm một đánh giá bao gồm tóm tắt PR và các đề xuất cải tiến cụ thể.
 
-    - ask / ask_question [question] - Ask a question about the PR.
+    - ask / ask_question [question] - Đặt câu hỏi về PR.
 
-    - describe / describe_pr - Modify the PR title and description based on the PR's contents.
+    - describe / describe_pr - Sửa tiêu đề và mô tả PR dựa trên nội dung của PR.
 
-    - improve / improve_code - Suggest improvements to the code in the PR as pull request comments ready to commit.
-    Extended mode ('improve --extended') employs several calls, and provides a more thorough feedback
+    - improve / improve_code - Đề xuất cải tiến code trong PR dưới dạng bình luận pull request sẵn sàng để commit.
+    Chế độ mở rộng ('improve --extended') dùng nhiều lệnh gọi, và cung cấp phản hồi kỹ hơn
 
-    - reflect - Ask the PR author questions about the PR.
+    - reflect - Đặt câu hỏi cho tác giả PR về PR.
 
-    - update_changelog - Update the changelog based on the PR's contents.
+    - update_changelog - Cập nhật changelog dựa trên nội dung của PR.
 
     - add_docs
 
     - generate_labels
 
-    - help_docs - Ask a question, from either an issue or PR context, on a given repo (current context or a different one)
+    - help_docs - Đặt câu hỏi, từ ngữ cảnh issue hoặc PR, trên một repo cho trước (ngữ cảnh hiện tại hoặc một repo khác)
 
 
-    Configuration:
-    To edit any configuration parameter from 'configuration.toml', just add -config_path=<value>.
-    For example: 'python cli.py --pr_url=... review --pr_reviewer.extra_instructions="focus on the file: ..."'
+    Cấu hình:
+    Để sửa bất kỳ tham số cấu hình nào từ 'configuration.toml', chỉ cần thêm -config_path=<value>.
+    Ví dụ: 'python cli.py --pr_url=... review --pr_reviewer.extra_instructions="focus on the file: ..."'
     """)
     parser.add_argument('--version', action='version', version=f'pr-agent {get_version()}')
-    parser.add_argument('--pr_url', type=str, help='The URL of the PR to review', default=None)
-    parser.add_argument('--issue_url', type=str, help='The URL of the Issue to review', default=None)
-    parser.add_argument('--config-branch', type=str, help='Git branch to load .pr_agent.toml from', default=None)
+    parser.add_argument('--pr_url', type=str, help='URL của PR cần đánh giá', default=None)
+    parser.add_argument('--issue_url', type=str, help='URL của Issue cần đánh giá', default=None)
+    parser.add_argument('--config-branch', type=str, help='Branch git để tải .pr_agent.toml từ đó', default=None)
     parser.add_argument(
         "--extra_config_url",
         type=str,
         default=os.environ.get("PR_AGENT_EXTRA_CONFIG_URL"),
         help=(
-            "URL or local path of an additional .pr_agent.toml to merge before the "
-            "repo-local config (e.g. shared/org defaults). Accepts http(s):// URLs or "
-            "a filesystem path. For private endpoints, set PR_AGENT_EXTRA_CONFIG_AUTH_HEADER "
-            "(e.g. 'PRIVATE-TOKEN: <token>' or 'JOB-TOKEN: $CI_JOB_TOKEN'). "
-            "Repo-local .pr_agent.toml overrides values set here."
+            "URL hoặc đường dẫn cục bộ của một .pr_agent.toml bổ sung để gộp trước "
+            "config cục bộ của repo (ví dụ: mặc định chung/tổ chức). Hỗ trợ URL http(s):// hoặc "
+            "đường dẫn hệ thống file. Với các endpoint riêng tư, đặt PR_AGENT_EXTRA_CONFIG_AUTH_HEADER "
+            "(ví dụ: 'PRIVATE-TOKEN: <token>' hoặc 'JOB-TOKEN: $CI_JOB_TOKEN'). "
+            "File .pr_agent.toml cục bộ của repo sẽ ghi đè giá trị đặt ở đây."
         ),
     )
     parser.add_argument("--diff-file", dest="diff_file", type=str, default=None,
-                        help="Path to a unified diff file to review (plain-diff local mode)")
+                        help="Đường dẫn tới một file unified diff để đánh giá (chế độ plain-diff cục bộ)")
     parser.add_argument("--stdin", action="store_true", default=False,
-                        help="Read a unified diff from stdin (plain-diff local mode)")
+                        help="Đọc unified diff từ stdin (chế độ plain-diff cục bộ)")
     parser.add_argument("--output", dest="output", type=str, default=None,
-                        help="Write the result to this file (in addition to stdout)")
-    parser.add_argument('command', type=str, help='The', choices=commands, default='review')
+                        help="Ghi kết quả vào file này (cùng với stdout)")
+    parser.add_argument('command', type=str, help='Lệnh', choices=commands, default='review')
     parser.add_argument('rest', nargs=argparse.REMAINDER, default=[])
     return parser
 
@@ -96,19 +96,19 @@ def run(inargs=None, args=None):
     diff_mode = getattr(args, "stdin", False) or getattr(args, "diff_file", None)
     if diff_mode:
         if args.stdin and args.diff_file:
-            parser.error("--stdin and --diff-file are mutually exclusive")
+            parser.error("--stdin và --diff-file loại trừ lẫn nhau")
         if args.diff_file:
             try:
                 with open(args.diff_file, "r", encoding="utf-8") as fh:
                     diff_content = fh.read()
             except OSError as e:
-                parser.error(f"Could not read --diff-file '{args.diff_file}': {e}")
+                parser.error(f"Không thể đọc --diff-file '{args.diff_file}': {e}")
             except UnicodeDecodeError as e:
-                parser.error(f"--diff-file '{args.diff_file}' is not valid UTF-8 text: {e}")
+                parser.error(f"--diff-file '{args.diff_file}' không phải là văn bản UTF-8 hợp lệ: {e}")
         else:
             diff_content = sys.stdin.read()
         if not diff_content.strip():
-            parser.error("No diff content received (empty stdin/file)")
+            parser.error("Không nhận được nội dung diff (stdin/file trống)")
         get_settings().set("config.git_provider", "plain-diff")
         get_settings().set("plain_diff.content", diff_content)
         get_settings().set("plain_diff.output_path", getattr(args, "output", None))

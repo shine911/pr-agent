@@ -341,7 +341,7 @@ class GiteaProvider(GitProvider):
         self.publish_inline_comments([payload])
 
 
-    def publish_inline_comments(self, comments: List[Dict[str, Any]],body : str = "Inline comment") -> None:
+    def publish_inline_comments(self, comments: List[Dict[str, Any]],body : str = "Bình luận nội tuyến") -> None:
         response = self.repo_api.create_inline_comment(
             owner=self.owner,
             repo=self.repo,

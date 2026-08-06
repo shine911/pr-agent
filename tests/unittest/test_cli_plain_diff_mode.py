@@ -46,7 +46,7 @@ def test_missing_diff_file_fails_fast(tmp_path, capsys):
     with pytest.raises(SystemExit):
         run(inargs=["--diff-file", str(missing), "review"])
     err = capsys.readouterr().err
-    assert "Could not read --diff-file" in err
+    assert "Không thể đọc --diff-file" in err
 
 
 _DIFF = (

@@ -51,7 +51,7 @@ class PRAddDocs:
         try:
             get_logger().info('Generating code Docs for PR...')
             if get_settings().config.publish_output:
-                self.git_provider.publish_comment("Generating Documentation...", is_temporary=True)
+                self.git_provider.publish_comment("Đang sinh tài liệu...", is_temporary=True)
 
             get_logger().info('Preparing PR documentation...')
             await retry_with_fallback_models(self._prepare_prediction)
@@ -105,7 +105,7 @@ class PRAddDocs:
         docs = []
 
         if not data['Code Documentation']:
-            return self.git_provider.publish_comment('No code documentation found to improve this PR.')
+            return self.git_provider.publish_comment('Không tìm thấy tài liệu code nào để cải thiện PR này.')
 
         for d in data['Code Documentation']:
             try:
@@ -119,7 +119,7 @@ class PRAddDocs:
                     new_code_snippet = self.dedent_code(relevant_file, relevant_line, documentation, doc_placement,
                                                         add_original_line=True)
 
-                    body = f"**Suggestion:** Proposed documentation\n```suggestion\n" + new_code_snippet + "\n```"
+                    body = f"**Đề xuất:** Tài liệu được đề xuất\n```suggestion\n" + new_code_snippet + "\n```"
                     docs.append({'body': body, 'relevant_file': relevant_file,
                                              'relevant_lines_start': relevant_line,
                                              'relevant_lines_end': relevant_line})

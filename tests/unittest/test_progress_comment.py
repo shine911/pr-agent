@@ -73,9 +73,9 @@ def test_build_progress_comment_contains_expected_elements(mock_get_settings):
 
     progress_comment = build_progress_comment()
 
-    assert "Generating PR code suggestions" in progress_comment
-    assert "Work in progress ..." in progress_comment
-    assert '<img src="https://example.com/custom.gif" alt="Work in progress" width="150">' in progress_comment
+    assert "Đang sinh đề xuất code cho PR" in progress_comment
+    assert "Đang xử lý ..." in progress_comment
+    assert '<img src="https://example.com/custom.gif" alt="Đang xử lý" width="150">' in progress_comment
 
 
 @patch("pr_agent.tools.progress_comment.get_settings")
@@ -84,4 +84,4 @@ def test_build_progress_comment_uses_defaults(mock_get_settings):
 
     progress_comment = build_progress_comment()
 
-    assert f'<img src="{DEFAULT_PROGRESS_GIF_URL}" alt="Work in progress" width="{DEFAULT_PROGRESS_GIF_WIDTH}">' in progress_comment
+    assert f'<img src="{DEFAULT_PROGRESS_GIF_URL}" alt="Đang xử lý" width="{DEFAULT_PROGRESS_GIF_WIDTH}">' in progress_comment

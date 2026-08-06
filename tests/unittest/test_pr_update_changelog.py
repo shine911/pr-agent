@@ -136,7 +136,7 @@ class TestPRUpdateChangelog:
         
         # Assert
         assert new_content == "## v1.1.0\n- New feature"
-        assert "to commit the new content" in answer
+        assert "để commit nội dung mới" in answer
 
     def _make_no_push_provider(self, extra_spec=None):
         spec = ["publish_comment", "remove_initial_comment", "get_pr_branch", "get_pr_description",
@@ -175,15 +175,15 @@ class TestPRUpdateChangelog:
             tool = PRUpdateChangelog("https://example.com/pr/123", ai_handler=lambda: mock_ai_handler)
 
             # Push isn't possible -> degrade to comment mode (don't push, don't drop the output).
-            assert tool.push_skipped_reason == "not supported for this git provider"
+            assert tool.push_skipped_reason == "không được nhà cung cấp git này hỗ trợ"
             assert tool.commit_changelog is False
 
             tool.prediction = "## v1.1.0\n- New feature"
             await tool.run()
 
             published = " ".join(str(c) for c in provider.publish_comment.call_args_list)
-            assert "Changelog updates" in published  # the generated changelog was posted
-            assert "not pushed" in published          # with a note it wasn't committed
+            assert "Cập nhật changelog" in published  # the generated changelog was posted
+            assert "chưa được push" in published          # with a note it wasn't committed
 
     @pytest.mark.asyncio
     async def test_run_restricted_mode_publishes_comment_instead_of_pushing(self, mock_ai_handler):
@@ -204,7 +204,7 @@ class TestPRUpdateChangelog:
             mock_settings.return_value.get.return_value = {}
             tool = PRUpdateChangelog("https://example.com/pr/1", ai_handler=lambda: mock_ai_handler)
 
-            assert tool.push_skipped_reason == "restricted by configuration (restricted_mode)"
+            assert tool.push_skipped_reason == "bị hạn chế bởi cấu hình (restricted_mode)"
             assert tool.commit_changelog is False
             provider.is_supported.assert_called_with("push_code")
 
@@ -213,8 +213,8 @@ class TestPRUpdateChangelog:
 
             provider.create_or_update_pr_file.assert_not_called()  # never pushed
             published = " ".join(str(c) for c in provider.publish_comment.call_args_list)
-            assert "Changelog updates" in published
-            assert "not pushed" in published
+            assert "Cập nhật changelog" in published
+            assert "chưa được push" in published
 
     @pytest.mark.asyncio
     async def test_run_with_push_support(self, changelog_tool, mock_git_provider):
@@ -264,7 +264,7 @@ class TestPRUpdateChangelog:
                 file_path="CHANGELOG.md",
                 branch="feature-branch",
                 contents=new_content,
-                message="[skip ci] Update CHANGELOG.md"
+                message="[skip ci] Cập nhật CHANGELOG.md"
             )
 
     def test_gitlab_provider_method_detection(self, changelog_tool, mock_git_provider):

@@ -104,7 +104,7 @@ class PRDescription:
                                 'config': dict(get_settings().config)}
             get_logger().debug("Relevant configs", artifact=relevant_configs)
             if get_settings().config.publish_output and not get_settings().config.get('is_auto_command', False):
-                self.git_provider.publish_comment("Preparing PR description...", is_temporary=True)
+                self.git_provider.publish_comment("Đang chuẩn bị mô tả PR...", is_temporary=True)
 
             # ticket extraction if exists
             await extract_and_cache_pr_tickets(self.git_provider, self.vars)
@@ -138,19 +138,19 @@ class PRDescription:
 
             # Add help text if gfm_markdown is supported
             if self.git_provider.is_supported("gfm_markdown") and get_settings().pr_description.enable_help_text:
-                pr_body += "<hr>\n\n<details> <summary><strong>✨ Describe tool usage guide:</strong></summary><hr> \n\n"
+                pr_body += "<hr>\n\n<details> <summary><strong>✨ Hướng dẫn sử dụng công cụ Describe:</strong></summary><hr> \n\n"
                 pr_body += HelpMessage.get_describe_usage_guide()
                 pr_body += "\n</details>\n"
             elif get_settings().pr_description.enable_help_comment and self.git_provider.is_supported("gfm_markdown"):
                 if isinstance(self.git_provider, GithubProvider):
-                    pr_body += ('\n\n___\n\n> <details> <summary>  Need help?</summary><li>Type <code>/help how to ...</code> '
-                                'in the comments thread for any questions about PR-Agent usage.</li><li>Check out the '
-                                '<a href="https://qodo-merge-docs.qodo.ai/usage-guide/">documentation</a> '
-                                'for more information.</li></details>')
+                    pr_body += ('\n\n___\n\n> <details> <summary>  Cần giúp đỡ?</summary><li>Gõ <code>/help how to ...</code> '
+                                'trong luồng bình luận cho bất kỳ câu hỏi nào về cách dùng PR-Agent.</li><li>Xem '
+                                '<a href="https://qodo-merge-docs.qodo.ai/usage-guide/">tài liệu</a> '
+                                'để biết thêm thông tin.</li></details>')
                 else: # gitlab
-                    pr_body += ("\n\n___\n\n<details><summary>Need help?</summary>- Type <code>/help how to ...</code> in the comments "
-                                "thread for any questions about PR-Agent usage.<br>- Check out the "
-                                "<a href='https://qodo-merge-docs.qodo.ai/usage-guide/'>documentation</a> for more information.</details>")
+                    pr_body += ("\n\n___\n\n<details><summary>Cần giúp đỡ?</summary>- Gõ <code>/help how to ...</code> trong luồng bình luận "
+                                "cho bất kỳ câu hỏi nào về cách dùng PR-Agent.<br>- Xem "
+                                "<a href='https://qodo-merge-docs.qodo.ai/usage-guide/'>tài liệu</a> để biết thêm thông tin.</details>")
             # elif get_settings().pr_description.enable_help_comment:
             #     pr_body += '\n\n___\n\n> 💡 **PR-Agent usage**: Comment `/help "your question"` on any pull request to receive relevant information'
 
@@ -195,7 +195,7 @@ class PRDescription:
                         latest_commit_url = self.git_provider.get_latest_commit_url()
                         if latest_commit_url:
                             pr_url = self.git_provider.get_pr_url()
-                            update_comment = f"**[PR Description]({pr_url})** updated to latest commit ({latest_commit_url})"
+                            update_comment = f"**[Mô tả PR]({pr_url})** đã được cập nhật đến commit mới nhất ({latest_commit_url})"
                             self.git_provider.publish_comment(update_comment)
                 self.git_provider.remove_initial_comment()
             else:
@@ -361,11 +361,11 @@ class PRDescription:
                 if counter_extra_files > MAX_EXTRA_FILES_TO_OUTPUT:
                     extra_file_yaml = f"""\
 - filename: |
-    Additional files not shown
+    Các file bổ sung không hiển thị
   changes_title: |
     ...
   label: |
-    additional files
+    file bổ sung
 """
                     prediction_extra = prediction_extra + "\n" + extra_file_yaml.strip()
                     get_logger().debug(f"Too many remaining files, clipping to {MAX_EXTRA_FILES_TO_OUTPUT}")
@@ -377,7 +377,7 @@ class PRDescription:
   changes_title: |
     ...
   label: |
-    additional files
+    file bổ sung
 """
                 prediction_extra = prediction_extra + "\n" + extra_file_yaml.strip()
 
@@ -417,7 +417,7 @@ class PRDescription:
   changes_title: |
     ...
   label: |
-    additional files (token-limit)
+    file bổ sung (giới hạn token)
 """
                 prediction_extra = prediction_extra + "\n" + extra_file_yaml.strip()
             prediction_extra_dict = load_yaml(prediction_extra, keys_fix_yaml=self.keys_fix)
@@ -594,13 +594,13 @@ class PRDescription:
             else:
                 key_publish = key.rstrip(':').replace("_", " ").capitalize()
                 if key_publish == "Type":
-                    key_publish = "PR Type"
+                    key_publish = "Loại PR"
                 # elif key_publish == "Description":
                 #     key_publish = "PR Description"
                 pr_body += f"### **{key_publish}**\n"
             if 'walkthrough' in key.lower():
                 if self.git_provider.is_supported("gfm_markdown"):
-                    pr_body += "<details> <summary>files:</summary>\n\n"
+                    pr_body += "<details> <summary>các file:</summary>\n\n"
                 for file in value:
                     filename = file['filename'].replace("'", "`")
                     description = file['changes_in_file']
@@ -680,7 +680,7 @@ class PRDescription:
             return pr_body, pr_comments
         try:
             pr_body += "<table>"
-            header = f"Relevant files"
+            header = f"Các file liên quan"
             delta = 75
             # header += "&nbsp; " * delta
             pr_body += f"""<thead><tr><th></th><th align="left">{header}</th></tr></thead>"""
@@ -691,7 +691,7 @@ class PRDescription:
                 list_tuples = value[semantic_label]
 
                 if use_collapsible_file_list:
-                    pr_body += f"""<td><details><summary>{len(list_tuples)} files</summary><table>"""
+                    pr_body += f"""<td><details><summary>{len(list_tuples)} file</summary><table>"""
                 else:
                     pr_body += f"""<td><table>"""
                 for filename, file_changes_title, file_change_description in list_tuples:
@@ -723,7 +723,7 @@ class PRDescription:
                     if hasattr(self.git_provider, 'get_line_link'):
                         filename = filename.strip()
                         link = self.git_provider.get_line_link(filename, relevant_line_start=-1)
-                    if (not link or not diff_plus_minus) and ('additional files' not in filename.lower()):
+                    if (not link or not diff_plus_minus) and ('file bổ sung' not in filename.lower()):
                         # get_logger().warning(f"Error getting line link for '{filename}'")
                         link = ""
                         # continue

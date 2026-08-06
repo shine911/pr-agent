@@ -3,7 +3,7 @@ Focused unit tests for Markdown / parser / ticket-visible output helpers.
 
 These tests document current behavior of helper seams that render
 user-visible Markdown / HTML for review output, ticket compliance,
-TODO sections, and PR description ticket extraction. The goal is to
+Mục TODO, and PR description ticket extraction. The goal is to
 lock in branches that are not already covered by:
 
 - tests/unittest/test_convert_to_markdown.py
@@ -106,33 +106,33 @@ class TestConvertToMarkdownV2Branches:
             incremental_review="2 commits",
         )
         assert "Incremental PR Reviewer Guide" in out
-        assert "Review for commits since previous PR-Agent review 2 commits" in out
+        assert "Đánh giá cho các commit kể từ lần đánh giá PR-Agent trước 2 commits" in out
 
     def test_relevant_tests_yes_branch_gfm(self):
         out = convert_to_markdown_v2(
             {"review": {"relevant_tests": "Yes"}}
         )
-        assert "<strong>PR contains tests</strong>" in out
+        assert "<strong>PR có chứa test</strong>" in out
         assert "<table>" in out and "</table>" in out
 
     def test_relevant_tests_yes_branch_non_gfm(self):
         out = convert_to_markdown_v2(
             {"review": {"relevant_tests": "Yes"}}, gfm_supported=False
         )
-        assert "### 🧪 PR contains tests" in out
+        assert "### 🧪 PR có chứa test" in out
         assert "<table>" not in out
 
     def test_relevant_tests_no_branch_non_gfm(self):
         out = convert_to_markdown_v2(
             {"review": {"relevant_tests": "No"}}, gfm_supported=False
         )
-        assert "### 🧪 No relevant tests" in out
+        assert "### 🧪 Không có test liên quan" in out
 
     def test_security_concerns_with_details_gfm(self):
         out = convert_to_markdown_v2(
             {"review": {"security_concerns": "SQL injection: details follow"}}
         )
-        assert "<strong>Security concerns</strong>" in out
+        assert "<strong>Vấn đề bảo mật</strong>" in out
         # emphasize_header wraps the part before ':' in <strong>.
         assert "<strong>SQL injection:</strong>" in out
 
@@ -141,20 +141,20 @@ class TestConvertToMarkdownV2Branches:
             {"review": {"security_concerns": "SQL injection: details"}},
             gfm_supported=False,
         )
-        assert "### 🔒 Security concerns" in out
+        assert "### 🔒 Vấn đề bảo mật" in out
         assert "**SQL injection:**" in out
 
     def test_key_issues_no_major_issues_gfm(self):
         out = convert_to_markdown_v2(
             {"review": {"key_issues_to_review": "No"}}
         )
-        assert "<strong>No major issues detected</strong>" in out
+        assert "<strong>Không phát hiện vấn đề lớn</strong>" in out
 
     def test_key_issues_no_major_issues_non_gfm(self):
         out = convert_to_markdown_v2(
             {"review": {"key_issues_to_review": "No"}}, gfm_supported=False
         )
-        assert "### ⚡ No major issues detected" in out
+        assert "### ⚡ Không phát hiện vấn đề lớn" in out
 
     def test_key_issues_possible_bug_header_softened(self):
         mock_provider = Mock()
@@ -175,8 +175,8 @@ class TestConvertToMarkdownV2Branches:
             },
             git_provider=mock_provider,
         )
-        # 'possible bug' is rewritten to the less alarming 'Possible Issue'.
-        assert "Possible Issue" in out
+        # 'possible bug' is rewritten to the less alarming 'Vấn đề có thể xảy ra'.
+        assert "Vấn đề có thể xảy ra" in out
         assert "possible bug" not in out
 
     def test_key_issues_without_provider_renders_strong_header(self):
@@ -204,14 +204,14 @@ class TestConvertToMarkdownV2Branches:
         out = convert_to_markdown_v2(
             {"review": {"estimated_effort_to_review_[1-5]": "3, because of churn"}}
         )
-        assert "Estimated effort to review</strong>: 3 🔵🔵🔵⚪⚪" in out
+        assert "Công sức ước tính để đánh giá</strong>: 3 🔵🔵🔵⚪⚪" in out
 
     def test_estimated_effort_invalid_value_is_skipped(self):
         # Completely unparsable value falls through `continue` and is omitted.
         out = convert_to_markdown_v2(
             {"review": {"estimated_effort_to_review_[1-5]": "not-a-number"}}
         )
-        assert "Estimated effort to review" not in out
+        assert "Công sức ước tính để đánh giá" not in out
 
     def test_can_be_split_single_item_renders_no_themes(self):
         out = convert_to_markdown_v2(
@@ -223,11 +223,11 @@ class TestConvertToMarkdownV2Branches:
                 }
             }
         )
-        assert "<strong>No multiple PR themes</strong>" in out
+        assert "<strong>Không có nhiều chủ đề PR</strong>" in out
 
     def test_can_be_split_empty_renders_no_themes(self):
         out = convert_to_markdown_v2({"review": {"can_be_split": []}})
-        assert "<strong>No multiple PR themes</strong>" in out
+        assert "<strong>Không có nhiều chủ đề PR</strong>" in out
 
     def test_default_branch_unknown_key_gfm(self):
         out = convert_to_markdown_v2(
@@ -245,14 +245,14 @@ class TestConvertToMarkdownV2Branches:
 
     def test_todo_sections_no_value_gfm(self):
         out = convert_to_markdown_v2({"review": {"todo_sections": "No"}})
-        assert "<strong>No TODO sections</strong>" in out
+        assert "<strong>Không có mục TODO</strong>" in out
         assert "✅" in out
 
     def test_todo_sections_no_value_non_gfm(self):
         out = convert_to_markdown_v2(
             {"review": {"todo_sections": "No"}}, gfm_supported=False
         )
-        assert "### ✅ No TODO sections" in out
+        assert "### ✅ Không có mục TODO" in out
 
     def test_todo_sections_list_with_provider_gfm(self):
         provider = Mock()
@@ -271,7 +271,7 @@ class TestConvertToMarkdownV2Branches:
             },
             git_provider=provider,
         )
-        assert "<strong>TODO sections</strong>" in out
+        assert "<strong>Mục TODO</strong>" in out
         assert "<ul>" in out
         assert "<a href='https://example.com/L10'>src/x.py [10]</a>" in out
         assert "finish refactor" in out
@@ -326,18 +326,18 @@ class TestTicketMarkdownLogic:
         # the header in this case will surface as a deliberate change.
         out = ticket_markdown_logic("🎫", "PREFIX", [], True)
         assert out.startswith("PREFIX")
-        assert "Ticket compliance analysis" in out
+        assert "Phân tích tuân thủ ticket" in out
         # No compliance emoji is rendered after the heading text.
-        assert "Ticket compliance analysis **" in out
+        assert "Phân tích tuân thủ ticket **" in out
 
     def test_not_compliant_only_renders_red_x(self):
         tickets = [
             self._ticket(not_compliant_requirements="- broken\n")
         ]
         out = ticket_markdown_logic("🎫", "", tickets, True)
-        assert "Ticket compliance analysis ❌" in out
-        assert "Not compliant" in out
-        assert "Non-compliant requirements:" in out
+        assert "Phân tích tuân thủ ticket ❌" in out
+        assert "Không tuân thủ" in out
+        assert "Yêu cầu chưa tuân thủ:" in out
 
     def test_partially_compliant_renders_orange_diamond(self):
         tickets = [
@@ -347,11 +347,11 @@ class TestTicketMarkdownLogic:
             )
         ]
         out = ticket_markdown_logic("🎫", "", tickets, True)
-        assert "Ticket compliance analysis 🔶" in out
-        assert "Partially compliant" in out
+        assert "Phân tích tuân thủ ticket 🔶" in out
+        assert "Tuân thủ một phần" in out
         # Both sections are rendered.
-        assert "Compliant requirements:" in out
-        assert "Non-compliant requirements:" in out
+        assert "Yêu cầu đã tuân thủ:" in out
+        assert "Yêu cầu chưa tuân thủ:" in out
 
     def test_mixed_full_and_not_compliant_renders_partial(self):
         tickets = [
@@ -362,8 +362,8 @@ class TestTicketMarkdownLogic:
             ),
         ]
         out = ticket_markdown_logic("🎫", "", tickets, True)
-        # Mix of Fully compliant + Not compliant ⇒ overall Partially compliant 🔶.
-        assert "Ticket compliance analysis 🔶" in out
+        # Mix of Tuân thủ đầy đủ + Không tuân thủ ⇒ overall Tuân thủ một phần 🔶.
+        assert "Phân tích tuân thủ ticket 🔶" in out
         # Both ticket id slugs are rendered.
         assert "[42](https://example.com/ticket/42)" in out
         assert "[43](https://example.com/ticket/43)" in out
@@ -376,10 +376,10 @@ class TestTicketMarkdownLogic:
             )
         ]
         out = ticket_markdown_logic("🎫", "", tickets, True)
-        assert "PR Code Verified" in out
-        assert "Requires further human verification:" in out
+        assert "PR Đã xác minh code" in out
+        assert "Cần con người xác minh thêm:" in out
         # All tickets verified ⇒ green check.
-        assert "Ticket compliance analysis ✅" in out
+        assert "Phân tích tuân thủ ticket ✅" in out
 
     def test_ticket_with_no_requirements_renders_header_only(self):
         # Tickets that have neither compliant nor non-compliant requirements
@@ -388,14 +388,14 @@ class TestTicketMarkdownLogic:
         # behavior — no compliance level or per-ticket detail is shown.
         tickets = [self._ticket()]
         out = ticket_markdown_logic("🎫", "", tickets, True)
-        assert "Ticket compliance analysis" in out
+        assert "Phân tích tuân thủ ticket" in out
         # No per-ticket body rendered.
         assert "https://example.com/ticket/42" not in out
 
     def test_non_gfm_renders_markdown_heading(self):
         tickets = [self._ticket(fully_compliant_requirements="- ok\n")]
         out = ticket_markdown_logic("🎫", "", tickets, gfm_supported=False)
-        assert out.startswith("### 🎫 Ticket compliance analysis ✅")
+        assert out.startswith("### 🎫 Phân tích tuân thủ ticket ✅")
         assert "<tr>" not in out
 
 
@@ -407,13 +407,13 @@ class TestTicketMarkdownLogic:
 class TestProcessCanBeSplit:
     def test_empty_value_returns_no_themes(self):
         out = process_can_be_split("🔀", [])
-        assert "No multiple PR themes" in out
+        assert "Không có nhiều chủ đề PR" in out
 
     def test_single_element_list_returns_no_themes(self):
         out = process_can_be_split(
             "🔀", [{"title": "only one", "relevant_files": ["a.py"]}]
         )
-        assert "No multiple PR themes" in out
+        assert "Không có nhiều chủ đề PR" in out
 
     def test_multiple_themes_render_details(self):
         out = process_can_be_split(

@@ -65,7 +65,7 @@ class PRConfig:
         skip_keys_lower = [key.lower() for key in skip_keys]
 
 
-        markdown_text = "<details> <summary><strong>🛠️ PR-Agent Configurations:</strong></summary> \n\n"
+        markdown_text = "<details> <summary><strong>🛠️ Cấu hình PR-Agent:</strong></summary> \n\n"
         markdown_text += f"\n\n```yaml\n\n"
         for header, configs in relevant_configs.items():
             if configs:

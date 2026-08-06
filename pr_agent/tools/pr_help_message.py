@@ -101,7 +101,7 @@ class PRHelpMessage:
                 if not get_settings().get('openai.key'):
                     if get_settings().config.publish_output:
                         self.git_provider.publish_comment(
-                            "The `Help` tool chat feature requires an OpenAI API key for calculating embeddings")
+                            "Tính năng chat của công cụ `Help` yêu cầu khóa API OpenAI để tính embedding")
                     else:
                         get_logger().error("The `Help` tool chat feature requires an OpenAI API key for calculating embeddings")
                     return
@@ -150,8 +150,8 @@ class PRHelpMessage:
                 if isinstance(response_yaml, str):
                     get_logger().warning(f"failing to parse response: {response_yaml}, publishing the response as is")
                     if get_settings().config.publish_output:
-                        answer_str = f"### Question: \n{self.question_str}\n\n"
-                        answer_str += f"### Answer:\n\n"
+                        answer_str = f"### Câu hỏi: \n{self.question_str}\n\n"
+                        answer_str += f"### Trả lời:\n\n"
                         answer_str += response_yaml
                         self.git_provider.publish_comment(answer_str)
                     return ""
@@ -161,18 +161,18 @@ class PRHelpMessage:
                 if not relevant_sections:
                     get_logger().info(f"Could not find relevant answer for the question: {self.question_str}")
                     if get_settings().config.publish_output:
-                        answer_str = f"### Question: \n{self.question_str}\n\n"
-                        answer_str += f"### Answer:\n\n"
-                        answer_str += f"Could not find relevant information to answer the question. Please provide more details and try again."
+                        answer_str = f"### Câu hỏi: \n{self.question_str}\n\n"
+                        answer_str += f"### Trả lời:\n\n"
+                        answer_str += f"Không tìm thấy thông tin liên quan để trả lời câu hỏi này. Vui lòng cung cấp thêm chi tiết và thử lại."
                         self.git_provider.publish_comment(answer_str)
                     return ""
 
                 # prepare the answer
                 answer_str = ""
                 if response_str:
-                    answer_str += f"### Question: \n{self.question_str}\n\n"
-                    answer_str += f"### Answer:\n{response_str.strip()}\n\n"
-                    answer_str += f"#### Relevant Sources:\n\n"
+                    answer_str += f"### Câu hỏi: \n{self.question_str}\n\n"
+                    answer_str += f"### Trả lời:\n{response_str.strip()}\n\n"
+                    answer_str += f"#### Nguồn liên quan:\n\n"
                     base_path = "https://qodo-merge-docs.qodo.ai/"
                     for section in relevant_sections:
                         file = section.get('file_name').strip().removesuffix('.md')
@@ -191,16 +191,16 @@ class PRHelpMessage:
             else:
                 if not isinstance(self.git_provider, BitbucketServerProvider) and not self.git_provider.is_supported("gfm_markdown"):
                     self.git_provider.publish_comment(
-                        "The `Help` tool requires gfm markdown, which is not supported by your code platform.")
+                        "Công cụ `Help` yêu cầu gfm markdown, tính năng này không được nền tảng code của bạn hỗ trợ.")
                     return
 
                 get_logger().info('Getting PR Help Message...')
                 relevant_configs = {'pr_help': dict(get_settings().pr_help),
                                     'config': dict(get_settings().config)}
                 get_logger().debug("Relevant configs", artifacts=relevant_configs)
-                pr_comment = "## PR Agent Walkthrough 🤖\n\n"
-                pr_comment += "Welcome to the PR Agent, an AI-powered tool for automated pull request analysis, feedback, suggestions and more."""
-                pr_comment += "\n\nHere is a list of tools you can use to interact with the PR Agent:\n"
+                pr_comment = "## Hướng dẫn PR Agent 🤖\n\n"
+                pr_comment += "Chào mừng đến với PR Agent, một công cụ dùng AI để tự động phân tích, phản hồi, đề xuất pull request và nhiều hơn nữa."""
+                pr_comment += "\n\nDưới đây là danh sách các công cụ bạn có thể dùng để tương tác với PR Agent:\n"
                 base_path = "https://pr-agent-docs.codium.ai/tools"
 
                 tool_names = []
@@ -214,14 +214,14 @@ class PRHelpMessage:
                 tool_names.append(f"[GENERATE CUSTOM LABELS]({base_path}/generate_labels/)")
 
                 descriptions = []
-                descriptions.append("Generates PR description - title, type, summary, code walkthrough and labels")
-                descriptions.append("Adjustable feedback about the PR, possible issues, security concerns, review effort and more")
-                descriptions.append("Code suggestions for improving the PR")
-                descriptions.append("Automatically updates the changelog")
-                descriptions.append("Answers a question regarding this repository, or a given one, based on given documentation path")
-                descriptions.append("Generates documentation to methods/functions/classes that changed in the PR")
-                descriptions.append("Answering free-text questions about the PR")
-                descriptions.append("Generates custom labels for the PR, based on specific guidelines defined by the user")
+                descriptions.append("Sinh mô tả PR - tiêu đề, loại, tóm tắt, walkthrough code và nhãn")
+                descriptions.append("Phản hồi tùy chỉnh về PR, các vấn đề có thể xảy ra, vấn đề bảo mật, công sức đánh giá và nhiều hơn")
+                descriptions.append("Đề xuất cải tiến code cho PR")
+                descriptions.append("Tự động cập nhật changelog")
+                descriptions.append("Trả lời câu hỏi về repository này, hoặc một repository khác, dựa trên đường dẫn tài liệu được cung cấp")
+                descriptions.append("Sinh tài liệu cho các phương thức/hàm/lớp đã thay đổi trong PR")
+                descriptions.append("Trả lời câu hỏi dạng văn bản tự do về PR")
+                descriptions.append("Sinh nhãn tùy chỉnh cho PR, dựa trên hướng dẫn cụ thể do người dùng định nghĩa")
 
                 commands  =[]
                 commands.append("`/describe`")
@@ -247,21 +247,21 @@ class PRHelpMessage:
                 checkbox_list.append("[*]")
 
                 if isinstance(self.git_provider, GithubProvider) and not get_settings().config.get('disable_checkboxes', False):
-                    pr_comment += f"<table><tr align='left'><th align='left'>Tool</th><th align='left'>Description</th><th align='left'>Trigger Interactively :gem:</th></tr>"
+                    pr_comment += f"<table><tr align='left'><th align='left'>Công cụ</th><th align='left'>Mô tả</th><th align='left'>Kích hoạt tương tác :gem:</th></tr>"
                     for i in range(len(tool_names)):
                         pr_comment += f"\n<tr><td align='left'>\n\n<strong>{tool_names[i]}</strong></td>\n<td>{descriptions[i]}</td>\n<td>\n\n{checkbox_list[i]}\n</td></tr>"
                     pr_comment += "</table>\n\n"
-                    pr_comment += f"""\n\n(1) Note that each tool can be [triggered automatically](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) when a new PR is opened, or called manually by [commenting on a PR](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#online-usage)."""
-                    pr_comment += f"""\n\n(2) Tools marked with [*] require additional parameters to be passed. For example, to invoke the `/ask` tool, you need to comment on a PR: `/ask "<question content>"`. See the relevant documentation for each tool for more details."""
+                    pr_comment += f"""\n\n(1) Lưu ý rằng mỗi công cụ có thể được [kích hoạt tự động](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) khi một PR mới được mở, hoặc gọi thủ công bằng cách [bình luận trên PR](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#online-usage)."""
+                    pr_comment += f"""\n\n(2) Các công cụ đánh dấu [*] yêu cầu truyền thêm tham số. Ví dụ, để gọi công cụ `/ask`, bạn cần bình luận trên PR: `/ask "<nội dung câu hỏi>"`. Xem tài liệu liên quan của từng công cụ để biết thêm chi tiết."""
                 elif isinstance(self.git_provider, BitbucketServerProvider):
                     # only support basic commands in BBDC
                     pr_comment = generate_bbdc_table(tool_names[:4], descriptions[:4])
                 else:
-                    pr_comment += f"<table><tr align='left'><th align='left'>Tool</th><th align='left'>Command</th><th align='left'>Description</th></tr>"
+                    pr_comment += f"<table><tr align='left'><th align='left'>Công cụ</th><th align='left'>Lệnh</th><th align='left'>Mô tả</th></tr>"
                     for i in range(len(tool_names)):
                         pr_comment += f"\n<tr><td align='left'>\n\n<strong>{tool_names[i]}</strong></td><td>{commands[i]}</td><td>{descriptions[i]}</td></tr>"
                     pr_comment += "</table>\n\n"
-                    pr_comment += f"""\n\nNote that each tool can be [invoked automatically](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/) when a new PR is opened, or called manually by [commenting on a PR](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#online-usage)."""
+                    pr_comment += f"""\n\nLưu ý rằng mỗi công cụ có thể được [gọi tự động](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/) khi một PR mới được mở, hoặc gọi thủ công bằng cách [bình luận trên PR](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#online-usage)."""
 
                 if get_settings().config.publish_output:
                     self.git_provider.publish_comment(pr_comment)
@@ -292,7 +292,7 @@ class PRHelpMessage:
 
 def generate_bbdc_table(column_arr_1, column_arr_2):
     # Generating header row
-    header_row = "| Tool  | Description | \n"
+    header_row = "| Công cụ  | Mô tả | \n"
 
     # Generating separator row
     separator_row = "|--|--|\n"

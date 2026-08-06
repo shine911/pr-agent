@@ -48,8 +48,8 @@ class PRSimilarIssue:
                 if not self.cli_mode:
                     repo_name, original_issue_number = self.git_provider._parse_issue_url(self.issue_url.split('=')[-1])
                     issue_main = self.git_provider.repo_obj.get_issue(original_issue_number)
-                    issue_main.create_comment("Please set pinecone api key and environment in secrets file")
-                raise Exception("Please set pinecone api key and environment in secrets file")
+                    issue_main.create_comment("Vui lòng thiết lập api key và environment của pinecone trong secrets file")
+                raise Exception("Vui lòng thiết lập api key và environment của pinecone trong secrets file")
 
             # check if index exists, and if repo is already indexed
             run_from_scratch = False
@@ -193,8 +193,8 @@ class PRSimilarIssue:
                 if not self.cli_mode:
                     repo_name, original_issue_number = self.git_provider._parse_issue_url(self.issue_url.split('=')[-1])
                     issue_main = self.git_provider.repo_obj.get_issue(original_issue_number)
-                    issue_main.create_comment("Please set qdrant url and api key in secrets file")
-                raise Exception("Please set qdrant url and api key in secrets file")
+                    issue_main.create_comment("Vui lòng thiết lập url và api key của qdrant trong secrets file")
+                raise Exception("Vui lòng thiết lập url và api key của qdrant trong secrets file")
 
             self.qdrant = qdrant_client.QdrantClient(url=url, api_key=api_key)
 
@@ -259,7 +259,7 @@ class PRSimilarIssue:
 
     async def run(self):
         if not self.supported:
-            message = "The /similar_issue tool is currently supported only for GitHub."
+            message = "Công cụ /similar_issue hiện chỉ được hỗ trợ trên GitHub."
             if get_settings().config.publish_output:
                 try:
                     from pr_agent.git_providers import get_git_provider_with_context
@@ -373,7 +373,7 @@ class PRSimilarIssue:
             get_logger().info('Done')
 
         get_logger().info('Publishing response...')
-        similar_issues_str = "### Similar Issues\n___\n\n"
+        similar_issues_str = "### Các Issue tương tự\n___\n\n"
 
         for i, issue_number_similar in enumerate(relevant_issues_number_list):
             issue = self.git_provider.repo_obj.get_issue(issue_number_similar)

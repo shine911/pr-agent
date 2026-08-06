@@ -70,7 +70,7 @@ class PRGenerateLabels:
         try:
             get_logger().info(f"Generating a PR labels {self.pr_id}")
             if get_settings().config.publish_output:
-                self.git_provider.publish_comment("Preparing PR labels...", is_temporary=True)
+                self.git_provider.publish_comment("Đang chuẩn bị nhãn PR...", is_temporary=True)
 
             await retry_with_fallback_models(self._prepare_prediction)
 
@@ -93,7 +93,7 @@ class PRGenerateLabels:
                     self.git_provider.publish_labels(pr_labels)
                 elif pr_labels:
                     value = ', '.join(v for v in pr_labels)
-                    pr_labels_text = f"## PR Labels:\n{value}\n"
+                    pr_labels_text = f"## Nhãn PR:\n{value}\n"
                     self.git_provider.publish_comment(pr_labels_text, is_temporary=False)
                 self.git_provider.remove_initial_comment()
         except Exception as e:

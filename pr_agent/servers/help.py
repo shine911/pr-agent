@@ -1,35 +1,35 @@
 class HelpMessage:
     @staticmethod
     def get_general_commands_text():
-       commands_text = "> - **/review**: Request a review of your Pull Request.   \n" \
-                "> - **/describe**: Update the PR title and description based on the contents of the PR.   \n" \
-                "> - **/improve [--extended]**: Suggest code improvements. Extended mode provides a higher quality feedback.   \n" \
-                "> - **/ask \\<QUESTION\\>**: Ask a question about the PR.   \n" \
-                "> - **/update_changelog**: Update the changelog based on the PR's contents.   \n" \
-                "> - **/help_docs \\<QUESTION\\>**: Given a path to documentation (either for this repository or for a given one), ask a question.   \n" \
-                "> - **/add_docs**: Generate docstring for new components introduced in the PR.   \n" \
-                "> - **/generate_labels**: Generate labels for the PR based on the PR's contents.   \n\n" \
-                ">See the [tools guide](https://pr-agent-docs.codium.ai/tools/) for more details.\n" \
-                ">To list the possible configuration parameters, add a **/config** comment.   \n"
+       commands_text = "> - **/review**: Yêu cầu đánh giá Pull Request của bạn.   \n" \
+                "> - **/describe**: Cập nhật tiêu đề và mô tả PR dựa trên nội dung của PR.   \n" \
+                "> - **/improve [--extended]**: Đề xuất cải tiến code. Chế độ mở rộng cung cấp phản hồi chất lượng cao hơn.   \n" \
+                "> - **/ask \\<QUESTION\\>**: Đặt câu hỏi về PR.   \n" \
+                "> - **/update_changelog**: Cập nhật changelog dựa trên nội dung của PR.   \n" \
+                "> - **/help_docs \\<QUESTION\\>**: Cho một đường dẫn tài liệu (của repository này hoặc một repository khác), đặt câu hỏi.   \n" \
+                "> - **/add_docs**: Sinh docstring cho các thành phần mới được đưa vào trong PR.   \n" \
+                "> - **/generate_labels**: Sinh nhãn cho PR dựa trên nội dung của PR.   \n\n" \
+                ">Xem [hướng dẫn công cụ](https://pr-agent-docs.codium.ai/tools/) để biết thêm chi tiết.\n" \
+                ">Để xem danh sách các tham số cấu hình khả dụng, thêm một bình luận **/config**.   \n"
        return commands_text
 
 
     @staticmethod
     def get_general_bot_help_text():
-        output = f"> To invoke the PR-Agent, add a comment using one of the following commands:  \n{HelpMessage.get_general_commands_text()} \n"
+        output = f"> Để gọi PR-Agent, thêm một bình luận sử dụng một trong các lệnh sau:  \n{HelpMessage.get_general_commands_text()} \n"
         return output
 
     @staticmethod
     def get_review_usage_guide():
-        output ="**Overview:**\n"
-        output +=("The `review` tool scans the PR code changes, and generates a PR review which includes several types of feedbacks, such as possible PR issues, security threats and relevant test in the PR. More feedbacks can be [added](https://pr-agent-docs.codium.ai/tools/review/#general-configurations) by configuring the tool.\n\n"
-                  "The tool can be triggered [automatically](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) every time a new PR is opened, or can be invoked manually by commenting on any PR.\n")
+        output ="**Tổng quan:**\n"
+        output +=("Công cụ `review` quét các thay đổi code trong PR, và sinh ra một đánh giá PR bao gồm nhiều loại phản hồi khác nhau, như các vấn đề PR có thể xảy ra, các nguy cơ bảo mật và test liên quan trong PR. Có thể [thêm](https://pr-agent-docs.codium.ai/tools/review/#general-configurations) nhiều phản hồi hơn bằng cách cấu hình công cụ.\n\n"
+                  "Công cụ có thể được kích hoạt [tự động](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) mỗi khi một PR mới được mở, hoặc có thể được gọi thủ công bằng cách bình luận trên bất kỳ PR nào.\n")
         output +="""\
-- When commenting, to edit [configurations](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml#L23) related to the review tool (`pr_reviewer` section), use the following template:
+- Khi bình luận, để chỉnh sửa [cấu hình](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml#L23) liên quan đến công cụ review (mục `pr_reviewer`), dùng mẫu sau:
 ```
 /review --pr_reviewer.some_config1=... --pr_reviewer.some_config2=...
 ```
-- With a [configuration file](https://pr-agent-docs.codium.ai/usage-guide/configuration_options/), use the following template:
+- Với một [file cấu hình](https://pr-agent-docs.codium.ai/usage-guide/configuration_options/), dùng mẫu sau:
 ```
 [pr_reviewer]
 some_config1=...
@@ -37,7 +37,7 @@ some_config2=...
 ```
     """
 
-        output += f"\n\nSee the review [usage page](https://pr-agent-docs.codium.ai/tools/review/) for a comprehensive guide on using this tool.\n\n"
+        output += f"\n\nXem [trang sử dụng](https://pr-agent-docs.codium.ai/tools/review/) review để có hướng dẫn đầy đủ về cách dùng công cụ này.\n\n"
 
         return output
 
@@ -45,16 +45,16 @@ some_config2=...
 
     @staticmethod
     def get_describe_usage_guide():
-        output = "**Overview:**\n"
-        output += "The `describe` tool scans the PR code changes, and generates a description for the PR - title, type, summary, walkthrough and labels. "
-        output += "The tool can be triggered [automatically](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) every time a new PR is opened, or can be invoked manually by commenting on a PR.\n"
+        output = "**Tổng quan:**\n"
+        output += "Công cụ `describe` quét các thay đổi code trong PR, và sinh ra một mô tả cho PR - tiêu đề, loại, tóm tắt, walkthrough và nhãn. "
+        output += "Công cụ có thể được kích hoạt [tự động](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) mỗi khi một PR mới được mở, hoặc có thể được gọi thủ công bằng cách bình luận trên một PR.\n"
         output += """\
 
-When commenting, to edit [configurations](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml#L46) related to the describe tool (`pr_description` section), use the following template:
+Khi bình luận, để chỉnh sửa [cấu hình](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml#L46) liên quan đến công cụ describe (mục `pr_description`), dùng mẫu sau:
 ```
 /describe --pr_description.some_config1=... --pr_description.some_config2=...
 ```
-With a [configuration file](https://pr-agent-docs.codium.ai/usage-guide/configuration_options/), use the following template:
+Với một [file cấu hình](https://pr-agent-docs.codium.ai/usage-guide/configuration_options/), dùng mẫu sau:
 ```
 [pr_description]
 some_config1=...
@@ -64,92 +64,92 @@ some_config2=...
         output += "\n\n<table>"
 
         # automation
-        output += "<tr><td><details> <summary><strong> Enabling\\disabling automation </strong></summary><hr>\n\n"
+        output += "<tr><td><details> <summary><strong> Bật\\tắt tự động hóa </strong></summary><hr>\n\n"
         output += """\
-- When you first install the app, the [default mode](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) for the describe tool is:
+- Khi bạn cài app lần đầu, [chế độ mặc định](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) cho công cụ describe là:
 ```
 pr_commands = ["/describe", ...]
 ```
-meaning the `describe` tool will run automatically on every PR.
+nghĩa là công cụ `describe` sẽ tự động chạy trên mọi PR.
 
-- Markers are an alternative way to control the generated description, to give maximal control to the user. If you set:
+- Marker là một cách khác để kiểm soát mô tả được sinh ra, nhằm trao quyền kiểm soát tối đa cho người dùng. Nếu bạn đặt:
 ```
 pr_commands = ["/describe --pr_description.use_description_markers=true", ...]
 ```
-the tool will replace every marker of the form `pr_agent:marker_name` in the PR description with the relevant content, where `marker_name` is one of the following:
-  - `type`: the PR type.
-  - `summary`: the PR summary.
-  - `walkthrough`: the PR walkthrough.
-  - `diagram`: the PR sequence diagram (if enabled).
+công cụ sẽ thay thế mọi marker dạng `pr_agent:marker_name` trong mô tả PR bằng nội dung liên quan, trong đó `marker_name` là một trong các giá trị sau:
+  - `type`: loại PR.
+  - `summary`: tóm tắt PR.
+  - `walkthrough`: walkthrough PR.
+  - `diagram`: sơ đồ trình tự PR (nếu được bật).
 
-Note that when markers are enabled, if the original PR description does not contain any markers, the tool will not alter the description at all.
+Lưu ý rằng khi marker được bật, nếu mô tả PR ban đầu không chứa marker nào, công cụ sẽ không thay đổi mô tả.
 
 """
         output += "\n\n</details></td></tr>\n\n"
 
         # custom labels
-        output += "<tr><td><details> <summary><strong> Custom labels </strong></summary><hr>\n\n"
+        output += "<tr><td><details> <summary><strong> Nhãn tùy chỉnh </strong></summary><hr>\n\n"
         output += """\
-The default labels of the `describe` tool are quite generic: [`Bug fix`, `Tests`, `Enhancement`, `Documentation`, `Other`].
+Các nhãn mặc định của công cụ `describe` khá chung: [`Bug fix`, `Tests`, `Enhancement`, `Documentation`, `Other`].
 
-If you specify [custom labels](https://pr-agent-docs.codium.ai/tools/describe/#handle-custom-labels-from-the-repos-labels-page) in the repo's labels page or via configuration file, you can get tailored labels for your use cases.
-Examples for custom labels:
-- `Main topic:performance` - pr_agent:The main topic of this PR is performance
-- `New endpoint` - pr_agent:A new endpoint was added in this PR
-- `SQL query` - pr_agent:A new SQL query was added in this PR
-- `Dockerfile changes` - pr_agent:The PR contains changes in the Dockerfile
+Nếu bạn khai báo [nhãn tùy chỉnh](https://pr-agent-docs.codium.ai/tools/describe/#handle-custom-labels-from-the-repos-labels-page) trong trang nhãn của repo hoặc qua file cấu hình, bạn có thể có nhãn phù hợp với nhu cầu sử dụng của mình.
+Ví dụ về nhãn tùy chỉnh:
+- `Main topic:performance` - pr_agent:Chủ đề chính của PR này là performance
+- `New endpoint` - pr_agent:Một endpoint mới đã được thêm trong PR này
+- `SQL query` - pr_agent:Một câu SQL mới đã được thêm trong PR này
+- `Dockerfile changes` - pr_agent:PR chứa thay đổi trong Dockerfile
 - ...
 
-The list above is eclectic, and aims to give an idea of different possibilities. Define custom labels that are relevant for your repo and use cases.
-Note that Labels are not mutually exclusive, so you can add multiple label categories.
-Make sure to provide proper title, and a detailed and well-phrased description for each label, so the tool will know when to suggest it.
+Danh sách trên chỉ mang tính minh họa, nhằm gợi ý các khả năng khác nhau. Hãy định nghĩa nhãn tùy chỉnh phù hợp với repo và nhu cầu sử dụng của bạn.
+Lưu ý rằng các nhãn không loại trừ nhau, nên bạn có thể thêm nhiều nhóm nhãn.
+Hãy đảm bảo cung cấp tiêu đề phù hợp, và mô tả chi tiết, rõ ràng cho từng nhãn, để công cụ biết khi nào nên đề xuất nhãn đó.
 """
         output += "\n\n</details></td></tr>\n\n"
 
         # extra instructions
-        output += "<tr><td><details> <summary><strong> Utilizing extra instructions</strong></summary><hr>\n\n"
+        output += "<tr><td><details> <summary><strong> Sử dụng chỉ dẫn bổ sung</strong></summary><hr>\n\n"
         output += '''\
-The `describe` tool can be configured with extra instructions, to guide the model to a feedback tailored to the needs of your project.
+Công cụ `describe` có thể được cấu hình với các chỉ dẫn bổ sung, để hướng dẫn model đưa ra phản hồi phù hợp với nhu cầu của dự án bạn.
 
-Be specific, clear, and concise in the instructions. With extra instructions, you are the prompter. Notice that the general structure of the description is fixed, and cannot be changed. Extra instructions can change the content or style of each sub-section of the PR description.
+Hãy viết chỉ dẫn cụ thể, rõ ràng và ngắn gọn. Với chỉ dẫn bổ sung, bạn chính là người ra lệnh cho model. Lưu ý rằng cấu trúc tổng thể của mô tả là cố định, và không thể thay đổi. Chỉ dẫn bổ sung có thể thay đổi nội dung hoặc phong cách của từng mục con trong mô tả PR.
 
-Examples for extra instructions:
+Ví dụ về chỉ dẫn bổ sung:
 ```
 [pr_description]
 extra_instructions="""\
-- The PR title should be in the format: '<PR type>: <title>'
-- The title should be short and concise (up to 10 words)
+- Tiêu đề PR nên theo định dạng: '<PR type>: <title>'
+- Tiêu đề nên ngắn gọn (tối đa 10 từ)
 - ...
 """
 ```
-Use triple quotes to write multi-line instructions. Use bullet points to make the instructions more readable.
+Dùng dấu triple quote để viết chỉ dẫn nhiều dòng. Dùng dấu đầu dòng để chỉ dẫn dễ đọc hơn.
 '''
         output += "\n\n</details></td></tr>\n\n"
 
 
         # general
-        output += "\n\n<tr><td><details> <summary><strong> More PR-Agent commands</strong></summary><hr> \n\n"
+        output += "\n\n<tr><td><details> <summary><strong> Thêm lệnh PR-Agent</strong></summary><hr> \n\n"
         output += HelpMessage.get_general_bot_help_text()
         output += "\n\n</details></td></tr>\n\n"
 
         output += "</table>"
 
-        output += f"\n\nSee the [describe usage](https://pr-agent-docs.codium.ai/tools/describe/) page for a comprehensive guide on using this tool.\n\n"
+        output += f"\n\nXem [trang sử dụng](https://pr-agent-docs.codium.ai/tools/describe/) describe để có hướng dẫn đầy đủ về cách dùng công cụ này.\n\n"
 
         return output
 
     @staticmethod
     def get_ask_usage_guide():
-        output = "**Overview:**\n"
+        output = "**Tổng quan:**\n"
         output += """\
-The `ask` tool answers questions about the PR, based on the PR code changes.
-It can be invoked manually by commenting on any PR:
+Công cụ `ask` trả lời các câu hỏi về PR, dựa trên các thay đổi code trong PR.
+Có thể gọi thủ công bằng cách bình luận trên bất kỳ PR nào:
 ```
 /ask "..."
 ```
 
-Note that the tool does not have "memory" of previous questions, and answers each question independently.
-You can ask questions about the entire PR, about specific code lines, or about an image related to the PR code changes.
+Lưu ý rằng công cụ này không có "bộ nhớ" về các câu hỏi trước, và trả lời mỗi câu hỏi một cách độc lập.
+Bạn có thể hỏi về toàn bộ PR, về các dòng code cụ thể, hoặc về một hình ảnh liên quan đến thay đổi code trong PR.
         """
         # output += "\n\n<table>"
         #
@@ -160,24 +160,24 @@ You can ask questions about the entire PR, about specific code lines, or about a
         #
         # output += "</table>"
 
-        output += f"\n\nSee the [ask usage](https://pr-agent-docs.codium.ai/tools/ask/) page for a comprehensive guide on using this tool.\n\n"
+        output += f"\n\nXem [trang sử dụng](https://pr-agent-docs.codium.ai/tools/ask/) ask để có hướng dẫn đầy đủ về cách dùng công cụ này.\n\n"
 
         return output
 
 
     @staticmethod
     def get_improve_usage_guide():
-        output = "**Overview:**\n"
-        output += "The code suggestions tool, named `improve`, scans the PR code changes, and automatically generates code suggestions for improving the PR."
-        output += "The tool can be triggered [automatically](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) every time a new PR is opened, or can be invoked manually by commenting on a PR.\n"
+        output = "**Tổng quan:**\n"
+        output += "Công cụ đề xuất cải tiến code, có tên `improve`, quét các thay đổi code trong PR, và tự động sinh ra các đề xuất cải tiến cho PR."
+        output += "Công cụ có thể được kích hoạt [tự động](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) mỗi khi một PR mới được mở, hoặc có thể được gọi thủ công bằng cách bình luận trên một PR.\n"
         output += """\
-- When commenting, to edit [configurations](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml#L78) related to the improve tool (`pr_code_suggestions` section), use the following template:
+- Khi bình luận, để chỉnh sửa [cấu hình](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml#L78) liên quan đến công cụ improve (mục `pr_code_suggestions`), dùng mẫu sau:
 
 ```
 /improve --pr_code_suggestions.some_config1=... --pr_code_suggestions.some_config2=...
 ```
 
-- With a [configuration file](https://pr-agent-docs.codium.ai/usage-guide/configuration_options/), use the following template:
+- Với một [file cấu hình](https://pr-agent-docs.codium.ai/usage-guide/configuration_options/), dùng mẫu sau:
 
 ```
 [pr_code_suggestions]
@@ -187,20 +187,20 @@ some_config2=...
 
 """
 
-        output += f"\n\nSee the improve [usage page](https://pr-agent-docs.codium.ai/tools/improve/) for a comprehensive guide on using this tool.\n\n"
+        output += f"\n\nXem [trang sử dụng](https://pr-agent-docs.codium.ai/tools/improve/) improve để có hướng dẫn đầy đủ về cách dùng công cụ này.\n\n"
 
         return output
 
 
     @staticmethod
     def get_help_docs_usage_guide():
-        output = "**Overview:**\n"
+        output = "**Tổng quan:**\n"
         output += """\
-The help docs tool, named `help_docs`, answers a question based on a given relative path of documentation, either from the repository of this merge request or from a given one."
-It can be invoked manually by commenting on any PR:
+Công cụ help docs, có tên `help_docs`, trả lời một câu hỏi dựa trên một đường dẫn tương đối tới tài liệu, từ repository của merge request này hoặc từ một repository khác."
+Có thể gọi thủ công bằng cách bình luận trên bất kỳ PR nào:
 ```
 /help_docs "..."
 ```
 """
-        output += f"\n\nSee the [help_docs usage](https://pr-agent-docs.codium.ai/tools/help_docs/) page for a comprehensive guide on using this tool.\n\n"
+        output += f"\n\nXem [trang sử dụng](https://pr-agent-docs.codium.ai/tools/help_docs/) help_docs để có hướng dẫn đầy đủ về cách dùng công cụ này.\n\n"
         return output

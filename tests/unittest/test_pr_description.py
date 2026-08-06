@@ -168,4 +168,4 @@ pr_files:
         loaded = yaml.safe_load(extended)
 
         assert [file["filename"].strip() for file in loaded["pr_files"]] == ["shown.py", "missing.py"]
-        assert loaded["pr_files"][1]["label"].strip() == "additional files"
+        assert loaded["pr_files"][1]["label"].strip() == "file bổ sung"
