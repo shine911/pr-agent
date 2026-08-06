@@ -105,7 +105,7 @@ class PRAddDocs:
         docs = []
 
         if not data['Code Documentation']:
-            return self.git_provider.publish_comment('Không tìm thấy tài liệu mã nào để cải thiện PR này.')
+            return self.git_provider.publish_comment('Không tìm thấy tài liệu code nào để cải thiện PR này.')
 
         for d in data['Code Documentation']:
             try:

@@ -3,7 +3,7 @@ class HelpMessage:
     def get_general_commands_text():
        commands_text = "> - **/review**: Yêu cầu đánh giá Pull Request của bạn.   \n" \
                 "> - **/describe**: Cập nhật tiêu đề và mô tả PR dựa trên nội dung của PR.   \n" \
-                "> - **/improve [--extended]**: Đề xuất cải tiến mã. Chế độ mở rộng cung cấp phản hồi chất lượng cao hơn.   \n" \
+                "> - **/improve [--extended]**: Đề xuất cải tiến code. Chế độ mở rộng cung cấp phản hồi chất lượng cao hơn.   \n" \
                 "> - **/ask \\<QUESTION\\>**: Đặt câu hỏi về PR.   \n" \
                 "> - **/update_changelog**: Cập nhật changelog dựa trên nội dung của PR.   \n" \
                 "> - **/help_docs \\<QUESTION\\>**: Cho một đường dẫn tài liệu (của repository này hoặc một repository khác), đặt câu hỏi.   \n" \
@@ -22,7 +22,7 @@ class HelpMessage:
     @staticmethod
     def get_review_usage_guide():
         output ="**Tổng quan:**\n"
-        output +=("Công cụ `review` quét các thay đổi mã trong PR, và sinh ra một đánh giá PR bao gồm nhiều loại phản hồi khác nhau, như các vấn đề PR có thể xảy ra, các nguy cơ an ninh và test liên quan trong PR. Có thể [thêm](https://pr-agent-docs.codium.ai/tools/review/#general-configurations) nhiều phản hồi hơn bằng cách cấu hình công cụ.\n\n"
+        output +=("Công cụ `review` quét các thay đổi code trong PR, và sinh ra một đánh giá PR bao gồm nhiều loại phản hồi khác nhau, như các vấn đề PR có thể xảy ra, các nguy cơ bảo mật và test liên quan trong PR. Có thể [thêm](https://pr-agent-docs.codium.ai/tools/review/#general-configurations) nhiều phản hồi hơn bằng cách cấu hình công cụ.\n\n"
                   "Công cụ có thể được kích hoạt [tự động](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) mỗi khi một PR mới được mở, hoặc có thể được gọi thủ công bằng cách bình luận trên bất kỳ PR nào.\n")
         output +="""\
 - Khi bình luận, để chỉnh sửa [cấu hình](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml#L23) liên quan đến công cụ review (mục `pr_reviewer`), dùng mẫu sau:
@@ -46,7 +46,7 @@ some_config2=...
     @staticmethod
     def get_describe_usage_guide():
         output = "**Tổng quan:**\n"
-        output += "Công cụ `describe` quét các thay đổi mã trong PR, và sinh ra một mô tả cho PR - tiêu đề, loại, tóm tắt, walkthrough và nhãn. "
+        output += "Công cụ `describe` quét các thay đổi code trong PR, và sinh ra một mô tả cho PR - tiêu đề, loại, tóm tắt, walkthrough và nhãn. "
         output += "Công cụ có thể được kích hoạt [tự động](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) mỗi khi một PR mới được mở, hoặc có thể được gọi thủ công bằng cách bình luận trên một PR.\n"
         output += """\
 
@@ -142,14 +142,14 @@ Dùng dấu triple quote để viết chỉ dẫn nhiều dòng. Dùng dấu đ�
     def get_ask_usage_guide():
         output = "**Tổng quan:**\n"
         output += """\
-Công cụ `ask` trả lời các câu hỏi về PR, dựa trên các thay đổi mã trong PR.
+Công cụ `ask` trả lời các câu hỏi về PR, dựa trên các thay đổi code trong PR.
 Có thể gọi thủ công bằng cách bình luận trên bất kỳ PR nào:
 ```
 /ask "..."
 ```
 
 Lưu ý rằng công cụ này không có "bộ nhớ" về các câu hỏi trước, và trả lời mỗi câu hỏi một cách độc lập.
-Bạn có thể hỏi về toàn bộ PR, về các dòng mã cụ thể, hoặc về một hình ảnh liên quan đến thay đổi mã trong PR.
+Bạn có thể hỏi về toàn bộ PR, về các dòng code cụ thể, hoặc về một hình ảnh liên quan đến thay đổi code trong PR.
         """
         # output += "\n\n<table>"
         #
@@ -168,7 +168,7 @@ Bạn có thể hỏi về toàn bộ PR, về các dòng mã cụ thể, hoặc
     @staticmethod
     def get_improve_usage_guide():
         output = "**Tổng quan:**\n"
-        output += "Công cụ đề xuất cải tiến mã, có tên `improve`, quét các thay đổi mã trong PR, và tự động sinh ra các đề xuất cải tiến cho PR."
+        output += "Công cụ đề xuất cải tiến code, có tên `improve`, quét các thay đổi code trong PR, và tự động sinh ra các đề xuất cải tiến cho PR."
         output += "Công cụ có thể được kích hoạt [tự động](https://pr-agent-docs.codium.ai/usage-guide/automations_and_usage/#github-app-automatic-tools-when-a-new-pr-is-opened) mỗi khi một PR mới được mở, hoặc có thể được gọi thủ công bằng cách bình luận trên một PR.\n"
         output += """\
 - Khi bình luận, để chỉnh sửa [cấu hình](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml#L78) liên quan đến công cụ improve (mục `pr_code_suggestions`), dùng mẫu sau:

@@ -191,7 +191,7 @@ class PRHelpMessage:
             else:
                 if not isinstance(self.git_provider, BitbucketServerProvider) and not self.git_provider.is_supported("gfm_markdown"):
                     self.git_provider.publish_comment(
-                        "Công cụ `Help` yêu cầu gfm markdown, tính năng này không được nền tảng mã của bạn hỗ trợ.")
+                        "Công cụ `Help` yêu cầu gfm markdown, tính năng này không được nền tảng code của bạn hỗ trợ.")
                     return
 
                 get_logger().info('Getting PR Help Message...')
@@ -214,9 +214,9 @@ class PRHelpMessage:
                 tool_names.append(f"[GENERATE CUSTOM LABELS]({base_path}/generate_labels/)")
 
                 descriptions = []
-                descriptions.append("Sinh mô tả PR - tiêu đề, loại, tóm tắt, walkthrough mã và nhãn")
-                descriptions.append("Phản hồi tùy chỉnh về PR, các vấn đề có thể xảy ra, vấn đề an ninh, công sức đánh giá và nhiều hơn")
-                descriptions.append("Đề xuất cải tiến mã cho PR")
+                descriptions.append("Sinh mô tả PR - tiêu đề, loại, tóm tắt, walkthrough code và nhãn")
+                descriptions.append("Phản hồi tùy chỉnh về PR, các vấn đề có thể xảy ra, vấn đề bảo mật, công sức đánh giá và nhiều hơn")
+                descriptions.append("Đề xuất cải tiến code cho PR")
                 descriptions.append("Tự động cập nhật changelog")
                 descriptions.append("Trả lời câu hỏi về repository này, hoặc một repository khác, dựa trên đường dẫn tài liệu được cung cấp")
                 descriptions.append("Sinh tài liệu cho các phương thức/hàm/lớp đã thay đổi trong PR")

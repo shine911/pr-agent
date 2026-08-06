@@ -27,7 +27,7 @@ def build_progress_comment() -> str:
     gif_width = get_progress_gif_width()
 
     return (
-        "## Đang sinh đề xuất mã cho PR\n\n"
+        "## Đang sinh đề xuất code cho PR\n\n"
         "\nĐang xử lý ...<br>\n"
         f"<img src=\"{gif_url}\" alt=\"Đang xử lý\" width=\"{gif_width}\">"
     )

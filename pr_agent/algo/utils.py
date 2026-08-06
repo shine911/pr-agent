@@ -223,17 +223,17 @@ def convert_to_markdown_v2(output_data: dict,
             if gfm_supported:
                 markdown_text += f"<tr><td>"
                 if is_value_no(value):
-                    markdown_text += f"{emoji}&nbsp;<strong>Không phát hiện vấn đề an ninh</strong>"
+                    markdown_text += f"{emoji}&nbsp;<strong>Không phát hiện vấn đề bảo mật</strong>"
                 else:
-                    markdown_text += f"{emoji}&nbsp;<strong>Vấn đề an ninh</strong><br><br>\n\n"
+                    markdown_text += f"{emoji}&nbsp;<strong>Vấn đề bảo mật</strong><br><br>\n\n"
                     value = emphasize_header(value.strip())
                     markdown_text += f"{value}"
                 markdown_text += f"</td></tr>\n"
             else:
                 if is_value_no(value):
-                    markdown_text += f'### {emoji} Không phát hiện vấn đề an ninh\n\n'
+                    markdown_text += f'### {emoji} Không phát hiện vấn đề bảo mật\n\n'
                 else:
-                    markdown_text += f"### {emoji} Vấn đề an ninh\n\n"
+                    markdown_text += f"### {emoji} Vấn đề bảo mật\n\n"
                     value = emphasize_header(value.strip(), only_markdown=True)
                     markdown_text += f"{value}\n\n"
         elif 'todo sections' in key_nice.lower():
@@ -395,7 +395,7 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
                         if not requires_further_human_verification:
                             ticket_compliance_level = 'Tuân thủ đầy đủ'
                         else:
-                            ticket_compliance_level = 'PR Đã xác minh mã'
+                            ticket_compliance_level = 'PR Đã xác minh code'
                 elif not_compliant_str:
                     ticket_compliance_level = 'Không tuân thủ'
 
@@ -428,12 +428,12 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
             if all(level == 'Tuân thủ đầy đủ' for level in all_compliance_levels):
                 compliance_level = 'Tuân thủ đầy đủ'
                 compliance_emoji = '✅'
-            elif all(level == 'PR Đã xác minh mã' for level in all_compliance_levels):
-                compliance_level = 'PR Đã xác minh mã'
+            elif all(level == 'PR Đã xác minh code' for level in all_compliance_levels):
+                compliance_level = 'PR Đã xác minh code'
                 compliance_emoji = '✅'
             elif any(level == 'Không tuân thủ' for level in all_compliance_levels):
                 # If there's a mix of compliant and non-compliant tickets
-                if any(level in ['Tuân thủ đầy đủ', 'PR Đã xác minh mã'] for level in all_compliance_levels):
+                if any(level in ['Tuân thủ đầy đủ', 'PR Đã xác minh code'] for level in all_compliance_levels):
                     compliance_level = 'Tuân thủ một phần'
                     compliance_emoji = '🔶'
                 else:
@@ -443,7 +443,7 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
                 compliance_level = 'Tuân thủ một phần'
                 compliance_emoji = '🔶'
             else:
-                compliance_level = 'PR Đã xác minh mã'
+                compliance_level = 'PR Đã xác minh code'
                 compliance_emoji = '✅'
 
             # Set extra statistics outside the ticket loop

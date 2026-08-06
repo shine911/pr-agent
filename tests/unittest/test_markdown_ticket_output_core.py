@@ -132,7 +132,7 @@ class TestConvertToMarkdownV2Branches:
         out = convert_to_markdown_v2(
             {"review": {"security_concerns": "SQL injection: details follow"}}
         )
-        assert "<strong>Vấn đề an ninh</strong>" in out
+        assert "<strong>Vấn đề bảo mật</strong>" in out
         # emphasize_header wraps the part before ':' in <strong>.
         assert "<strong>SQL injection:</strong>" in out
 
@@ -141,7 +141,7 @@ class TestConvertToMarkdownV2Branches:
             {"review": {"security_concerns": "SQL injection: details"}},
             gfm_supported=False,
         )
-        assert "### 🔒 Vấn đề an ninh" in out
+        assert "### 🔒 Vấn đề bảo mật" in out
         assert "**SQL injection:**" in out
 
     def test_key_issues_no_major_issues_gfm(self):
@@ -376,7 +376,7 @@ class TestTicketMarkdownLogic:
             )
         ]
         out = ticket_markdown_logic("🎫", "", tickets, True)
-        assert "PR Đã xác minh mã" in out
+        assert "PR Đã xác minh code" in out
         assert "Cần con người xác minh thêm:" in out
         # All tickets verified ⇒ green check.
         assert "Phân tích tuân thủ ticket ✅" in out

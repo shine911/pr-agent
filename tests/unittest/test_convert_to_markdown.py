@@ -62,7 +62,7 @@ class TestConvertToMarkdown:
             <tr><td>🧪&nbsp;<strong>Không có test liên quan</strong></td></tr>
             <tr><td>&nbsp;<strong>Possible issues</strong>: No
             </td></tr>
-            <tr><td>🔒&nbsp;<strong>Không phát hiện vấn đề an ninh</strong></td></tr>
+            <tr><td>🔒&nbsp;<strong>Không phát hiện vấn đề bảo mật</strong></td></tr>
             </table>
         """)
 
@@ -85,7 +85,7 @@ class TestConvertToMarkdown:
             ###  Possible issues: No
 
 
-            ### 🔒 Không phát hiện vấn đề an ninh
+            ### 🔒 Không phát hiện vấn đề bảo mật
         """)
 
         assert convert_to_markdown_v2(input_data, gfm_supported=False).strip() == expected_output.strip()

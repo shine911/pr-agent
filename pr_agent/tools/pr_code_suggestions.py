@@ -201,7 +201,7 @@ class PRCodeSuggestions:
                 else:
                     try:
                         self.git_provider.remove_initial_comment()
-                        self.git_provider.publish_comment(f"Không thể sinh đề xuất mã cho PR")
+                        self.git_provider.publish_comment(f"Không thể sinh đề xuất code cho PR")
                     except Exception as e:
                         get_logger().exception(f"Failed to update persistent review, error: {e}")
             if get_settings().config.get("propagate_tool_errors", False):
@@ -221,7 +221,7 @@ class PRCodeSuggestions:
         return pr_body
 
     async def publish_no_suggestions(self):
-        pr_body = "## PR Code Suggestions ✨\n\nKhông tìm thấy đề xuất mã nào cho PR."
+        pr_body = "## PR Code Suggestions ✨\n\nKhông tìm thấy đề xuất code nào cho PR."
         if (get_settings().config.publish_output and
                 get_settings().pr_code_suggestions.get('publish_output_no_suggestions', True)):
             get_logger().warning('No code suggestions found for the PR.')
@@ -800,7 +800,7 @@ class PRCodeSuggestions:
                 return pr_body
 
             if get_settings().config.is_auto_command:
-                pr_body += "Khám phá các đề xuất mã tùy chọn này:\n\n"
+                pr_body += "Khám phá các đề xuất code tùy chọn này:\n\n"
 
             language_extension_map_org = get_settings().language_extension_map_org
             extension_to_language = {}

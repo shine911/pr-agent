@@ -35,7 +35,7 @@ def set_parser():
 
     - describe / describe_pr - Sửa tiêu đề và mô tả PR dựa trên nội dung của PR.
 
-    - improve / improve_code - Đề xuất cải tiến mã trong PR dưới dạng bình luận pull request sẵn sàng để commit.
+    - improve / improve_code - Đề xuất cải tiến code trong PR dưới dạng bình luận pull request sẵn sàng để commit.
     Chế độ mở rộng ('improve --extended') dùng nhiều lệnh gọi, và cung cấp phản hồi kỹ hơn
 
     - reflect - Đặt câu hỏi cho tác giả PR về PR.

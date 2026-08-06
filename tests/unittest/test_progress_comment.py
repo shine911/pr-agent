@@ -73,7 +73,7 @@ def test_build_progress_comment_contains_expected_elements(mock_get_settings):
 
     progress_comment = build_progress_comment()
 
-    assert "Đang sinh đề xuất mã cho PR" in progress_comment
+    assert "Đang sinh đề xuất code cho PR" in progress_comment
     assert "Đang xử lý ..." in progress_comment
     assert '<img src="https://example.com/custom.gif" alt="Đang xử lý" width="150">' in progress_comment
 
