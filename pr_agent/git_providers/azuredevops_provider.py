@@ -66,7 +66,7 @@ class AzureDevopsProvider(GitProvider):
     ):
         if not AZURE_DEVOPS_AVAILABLE:
             raise ImportError(
-                "Azure DevOps provider is not available. Please install the required dependencies."
+                "Azure DevOps provider không khả dụng. Vui lòng cài đặt các dependency cần thiết."
             )
 
         self.azure_devops_client, self.azure_devops_board_client = self._get_azure_devops_client()

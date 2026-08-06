@@ -125,8 +125,8 @@ async def test_push_inline_renders_body_with_score_and_label():
     args = git_provider.publish_code_suggestions.call_args.args[0]
     assert len(args) == 1
     body = args[0]["body"]
-    assert body.startswith("**Suggestion:** Use the shared helper.")
-    assert "[maintainability, importance: 8]" in body
+    assert body.startswith("**Đề xuất:** Use the shared helper.")
+    assert "[maintainability, mức độ quan trọng: 8]" in body
     assert "```suggestion\n    return new()\n```" in body
     # original_suggestion is the unmodified dict
     assert args[0]["original_suggestion"]["one_sentence_summary"] == "Use the shared helper"
@@ -164,7 +164,7 @@ async def test_push_inline_publishes_no_suggestions_comment_when_empty():
     await tool.push_inline_code_suggestions({"code_suggestions": []})
 
     git_provider.publish_comment.assert_called_once_with(
-        "No suggestions found to improve this PR."
+        "Không tìm thấy đề xuất nào để cải thiện PR này."
     )
     git_provider.publish_code_suggestions.assert_not_called()
 
@@ -177,7 +177,7 @@ def test_generate_summarized_suggestions_empty_returns_placeholder():
     tool = _make_tool()
     out = tool.generate_summarized_suggestions({"code_suggestions": []})
     assert "PR Code Suggestions" in out
-    assert "No suggestions found to improve this PR." in out
+    assert "Không tìm thấy đề xuất nào để cải thiện PR này." in out
     # No table is rendered when empty
     assert "<table>" not in out
 
@@ -256,8 +256,8 @@ def test_generate_summarized_suggestions_includes_score_why_block_when_present()
     tool = _make_tool(git_provider)
     suggestion = _suggestion(score_why="Catches a real bug.")
     out = tool.generate_summarized_suggestions({"code_suggestions": [suggestion]})
-    assert "Suggestion importance[1-10]: 7" in out
-    assert "Why: Catches a real bug." in out
+    assert "Mức độ quan trọng của đề xuất[1-10]: 7" in out
+    assert "Lý do: Catches a real bug." in out
 
 
 # ---------------------------------------------------------------------------

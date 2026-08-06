@@ -394,17 +394,17 @@ def handle_configurations_errors(config_errors, git_provider):
             if err:
                 err_message = err['error']
                 config_type = err['category']
-                header = f"❌ **PR-Agent failed to apply '{config_type}' repo settings**"
+                header = f"❌ **PR-Agent không thể áp dụng cấu hình repo '{config_type}'**"
                 body = (
-                    f"{header}\n\nThe configuration file needs to be a valid "
-                    "[TOML](https://qodo-merge-docs.qodo.ai/usage-guide/configuration_options/), please fix it.\n\n"
+                    f"{header}\n\nFile cấu hình cần phải là "
+                    "[TOML](https://qodo-merge-docs.qodo.ai/usage-guide/configuration_options/) hợp lệ, vui lòng sửa lại.\n\n"
                 )
-                body += f"___\n\n**Error message:**\n`{err_message}`\n\n"
+                body += f"___\n\n**Thông báo lỗi:**\n`{err_message}`\n\n"
                 if config_type == "global":
                     # Global content is redacted, so we never render it — skip decoding it entirely.
                     # Global settings live in a `pr-agent-settings` repo scoped per platform
                     # (GitHub organization, GitLab group, or Bitbucket workspace).
-                    body += "\n\nThe invalid configuration came from the global `pr-agent-settings` settings repository."
+                    body += "\n\nCấu hình không hợp lệ này đến từ repository cấu hình toàn cục `pr-agent-settings`."
                 else:
                     settings_content = err['settings']
                     configuration_file_content = (
@@ -413,11 +413,11 @@ def handle_configurations_errors(config_errors, git_provider):
                     )
                     if git_provider.is_supported("gfm_markdown"):
                         body += (
-                            "\n\n<details><summary>Configuration content:</summary>\n\n"
+                            "\n\n<details><summary>Nội dung cấu hình:</summary>\n\n"
                             f"```toml\n{configuration_file_content}\n```\n\n</details>"
                         )
                     else:
-                        body += f"\n\n**Configuration content:**\n\n```toml\n{configuration_file_content}\n```\n\n"
+                        body += f"\n\n**Nội dung cấu hình:**\n\n```toml\n{configuration_file_content}\n```\n\n"
                 get_logger().warning("Sending a 'configuration error' comment to the PR", artifact={'body': body})
                 # git_provider.publish_comment(body)
                 if hasattr(git_provider, 'publish_persistent_comment'):

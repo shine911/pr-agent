@@ -57,7 +57,7 @@ class PRQuestions:
                             'config': dict(get_settings().config)}
         get_logger().debug("Relevant configs", artifacts=relevant_configs)
         if get_settings().config.publish_output:
-            self.git_provider.publish_comment("Preparing answer...", is_temporary=True)
+            self.git_provider.publish_comment("Đang chuẩn bị câu trả lời...", is_temporary=True)
 
         # identify image
         img_path = self.identify_image_in_comment()
@@ -121,7 +121,7 @@ class PRQuestions:
         github_quick_actions_MR = ["/approve", "/close", "/merge", "/reopen", "/unapprove", "/title", "/assign",
                                 "/copy_metadata", "/target_branch"]
         if any(action in model_answer for action in github_quick_actions_MR):
-            str_err = "Model answer contains GitHub quick actions, which are not supported in GitLab"
+            str_err = "Câu trả lời của model chứa các quick action của GitHub, không được GitLab hỗ trợ"
             get_logger().error(str_err)
             return str_err
         return model_answer
@@ -140,6 +140,6 @@ class PRQuestions:
                                artifact={"model_answer": model_answer, "sanitized_answer": model_answer_sanitized})
 
 
-        answer_str = f"### **Ask**❓\n{self.question_str}\n\n"
-        answer_str += f"### **Answer:**\n{model_answer_sanitized}\n\n"
+        answer_str = f"### **Hỏi**❓\n{self.question_str}\n\n"
+        answer_str += f"### **Trả lời:**\n{model_answer_sanitized}\n\n"
         return answer_str

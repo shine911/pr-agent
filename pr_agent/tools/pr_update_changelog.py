@@ -33,9 +33,9 @@ class PRUpdateChangelog:
         self.push_skipped_reason = None
         if self.push_changelog_changes:
             if not hasattr(self.git_provider, "create_or_update_pr_file"):
-                self.push_skipped_reason = "not supported for this git provider"
+                self.push_skipped_reason = "không được nhà cung cấp git này hỗ trợ"
             elif not self.git_provider.is_supported("push_code"):
-                self.push_skipped_reason = "restricted by configuration (restricted_mode)"
+                self.push_skipped_reason = "bị hạn chế bởi cấu hình (restricted_mode)"
         # Push only when it was requested AND is possible; otherwise fall back to a comment.
         self.commit_changelog = self.push_changelog_changes and self.push_skipped_reason is None
 
@@ -81,7 +81,7 @@ class PRUpdateChangelog:
             )
 
         if get_settings().config.publish_output:
-            self.git_provider.publish_comment("Preparing changelog updates...", is_temporary=True)
+            self.git_provider.publish_comment("Đang chuẩn bị cập nhật changelog...", is_temporary=True)
 
         await retry_with_fallback_models(self._prepare_prediction, model_type=ModelType.WEAK)
 
@@ -98,10 +98,10 @@ class PRUpdateChangelog:
             if self.commit_changelog:
                 self._push_changelog_update(new_file_content, answer)
             else:
-                changelog_comment = f"**Changelog updates:** 🔄\n\n{answer}"
+                changelog_comment = f"**Cập nhật changelog:** 🔄\n\n{answer}"
                 if self.push_skipped_reason:
                     changelog_comment += (
-                        f"\n\n> ℹ️ These changes were not pushed to the repository "
+                        f"\n\n> ℹ️ Các thay đổi này chưa được push vào repository "
                         f"({self.push_skipped_reason})."
                     )
                 self.git_provider.publish_comment(changelog_comment)
@@ -150,16 +150,16 @@ class PRUpdateChangelog:
             new_file_content = answer
 
         if not self.commit_changelog:
-            answer += "\n\n\n>to commit the new content to the CHANGELOG.md file, please type:" \
+            answer += "\n\n\n>để commit nội dung mới vào file CHANGELOG.md, vui lòng gõ:" \
                       "\n>'/update_changelog --pr_update_changelog.push_changelog_changes=true'\n"
 
         return new_file_content, answer
 
     def _push_changelog_update(self, new_file_content, answer):
         if get_settings().pr_update_changelog.get("skip_ci_on_push", True):
-            commit_message = "[skip ci] Update CHANGELOG.md"
+            commit_message = "[skip ci] Cập nhật CHANGELOG.md"
         else:
-            commit_message = "Update CHANGELOG.md"
+            commit_message = "Cập nhật CHANGELOG.md"
         self.git_provider.create_or_update_pr_file(
             file_path="CHANGELOG.md",
             branch=self.git_provider.get_pr_branch(),
@@ -172,7 +172,7 @@ class PRUpdateChangelog:
             if get_settings().config.git_provider == "github":
                 last_commit_id = list(self.git_provider.pr.get_commits())[-1]
                 d = dict(
-                    body="CHANGELOG.md update",
+                    body="Cập nhật CHANGELOG.md",
                     path="CHANGELOG.md",
                     line=max(2, len(answer.splitlines())),
                     start_line=1,
@@ -180,7 +180,7 @@ class PRUpdateChangelog:
                 self.git_provider.pr.create_review(commit=last_commit_id, comments=[d])
         except Exception:
             # we can't create a review for some reason, let's just publish a comment
-            self.git_provider.publish_comment(f"**Changelog updates: 🔄**\n\n{answer}")
+            self.git_provider.publish_comment(f"**Cập nhật changelog: 🔄**\n\n{answer}")
 
     def _get_default_changelog(self):
         example_changelog = \

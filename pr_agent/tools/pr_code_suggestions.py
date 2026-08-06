@@ -114,7 +114,7 @@ class PRCodeSuggestions:
                 if self.git_provider.is_supported("gfm_markdown"):
                     self.progress_response = self.git_provider.publish_comment(self.progress)
                 else:
-                    self.git_provider.publish_comment("Preparing suggestions...", is_temporary=True)
+                    self.git_provider.publish_comment("Đang chuẩn bị đề xuất...", is_temporary=True)
 
             # # call the model to get the suggestions, and self-reflect on them
             # if not self.is_extended:
@@ -154,9 +154,9 @@ class PRCodeSuggestions:
                     # add usage guide
                     if (get_settings().pr_code_suggestions.enable_chat_text and get_settings().config.is_auto_command
                             and isinstance(self.git_provider, GithubProvider)):
-                        pr_body += "\n\n>💡 Need additional feedback ? start a [PR chat](https://chromewebstore.google.com/detail/ephlnjeghhogofkifjloamocljapahnl) \n\n"
+                        pr_body += "\n\n>💡 Cần thêm phản hồi? bắt đầu một [PR chat](https://chromewebstore.google.com/detail/ephlnjeghhogofkifjloamocljapahnl) \n\n"
                     if get_settings().pr_code_suggestions.enable_help_text:
-                        pr_body += "<hr>\n\n<details> <summary><strong>💡 Tool usage guide:</strong></summary><hr> \n\n"
+                        pr_body += "<hr>\n\n<details> <summary><strong>💡 Hướng dẫn sử dụng công cụ:</strong></summary><hr> \n\n"
                         pr_body += HelpMessage.get_improve_usage_guide()
                         pr_body += "\n</details>\n"
 
@@ -201,7 +201,7 @@ class PRCodeSuggestions:
                 else:
                     try:
                         self.git_provider.remove_initial_comment()
-                        self.git_provider.publish_comment(f"Failed to generate code suggestions for PR")
+                        self.git_provider.publish_comment(f"Không thể sinh đề xuất mã cho PR")
                     except Exception as e:
                         get_logger().exception(f"Failed to update persistent review, error: {e}")
             if get_settings().config.get("propagate_tool_errors", False):
@@ -221,7 +221,7 @@ class PRCodeSuggestions:
         return pr_body
 
     async def publish_no_suggestions(self):
-        pr_body = "## PR Code Suggestions ✨\n\nNo code suggestions found for the PR."
+        pr_body = "## PR Code Suggestions ✨\n\nKhông tìm thấy đề xuất mã nào cho PR."
         if (get_settings().config.publish_output and
                 get_settings().pr_code_suggestions.get('publish_output_no_suggestions', True)):
             get_logger().warning('No code suggestions found for the PR.')
@@ -278,16 +278,16 @@ class PRCodeSuggestions:
 
             up_to_commit_txt = ""
             if match:
-                up_to_commit_txt = f" up to commit {match.group(0)[4:-3].strip()}"
+                up_to_commit_txt = f" đến commit {match.group(0)[4:-3].strip()}"
             return up_to_commit_txt
 
-        history_header = f"#### Previous suggestions\n"
+        history_header = f"#### Đề xuất trước đây\n"
         last_commit_num = git_provider.get_latest_commit_url().split('/')[-1][:7]
         if only_fold: # A user clicked on the 'self-review' checkbox
             text = get_settings().pr_code_suggestions.code_suggestions_self_review_text
             latest_suggestion_header = f"\n\n- [x]  {text}"
         else:
-            latest_suggestion_header = f"Latest suggestions up to {last_commit_num}"
+            latest_suggestion_header = f"Đề xuất mới nhất đến {last_commit_num}"
         latest_commit_html_comment = f"<!-- {last_commit_num} -->"
         found_comment = None
 
@@ -565,9 +565,9 @@ class PRCodeSuggestions:
             get_logger().info('No suggestions found to improve this PR.')
             if self.progress_response:
                 return self.git_provider.edit_comment(self.progress_response,
-                                                      body='No suggestions found to improve this PR.')
+                                                      body='Không tìm thấy đề xuất nào để cải thiện PR này.')
             else:
-                return self.git_provider.publish_comment('No suggestions found to improve this PR.')
+                return self.git_provider.publish_comment('Không tìm thấy đề xuất nào để cải thiện PR này.')
 
         for d in data['code_suggestions']:
             try:
@@ -584,9 +584,9 @@ class PRCodeSuggestions:
                     new_code_snippet = self.dedent_code(relevant_file, relevant_lines_start, new_code_snippet)
 
                 if d.get('score'):
-                    body = f"**Suggestion:** {content} [{label}, importance: {d.get('score')}]\n```suggestion\n" + new_code_snippet + "\n```"
+                    body = f"**Đề xuất:** {content} [{label}, mức độ quan trọng: {d.get('score')}]\n```suggestion\n" + new_code_snippet + "\n```"
                 else:
-                    body = f"**Suggestion:** {content} [{label}]\n```suggestion\n" + new_code_snippet + "\n```"
+                    body = f"**Đề xuất:** {content} [{label}]\n```suggestion\n" + new_code_snippet + "\n```"
                 code_suggestions.append({'body': body, 'relevant_file': relevant_file,
                                          'relevant_lines_start': relevant_lines_start,
                                          'relevant_lines_end': relevant_lines_end,
@@ -796,11 +796,11 @@ class PRCodeSuggestions:
             pr_body = "## PR Code Suggestions ✨\n\n"
 
             if len(data.get('code_suggestions', [])) == 0:
-                pr_body += "No suggestions found to improve this PR."
+                pr_body += "Không tìm thấy đề xuất nào để cải thiện PR này."
                 return pr_body
 
             if get_settings().config.is_auto_command:
-                pr_body += "Explore these optional code suggestions:\n\n"
+                pr_body += "Khám phá các đề xuất mã tùy chọn này:\n\n"
 
             language_extension_map_org = get_settings().language_extension_map_org
             extension_to_language = {}
@@ -809,10 +809,10 @@ class PRCodeSuggestions:
                     extension_to_language[ext] = language
 
             pr_body += "<table>"
-            header = f"Suggestion"
+            header = f"Đề xuất"
             delta = 66
             header += "&nbsp; " * delta
-            pr_body += f"""<thead><tr><td><strong>Category</strong></td><td align=left><strong>{header}</strong></td><td align=center><strong>Impact</strong></td></tr>"""
+            pr_body += f"""<thead><tr><td><strong>Danh mục</strong></td><td align=left><strong>{header}</strong></td><td align=center><strong>Mức độ ảnh hưởng</strong></td></tr>"""
             pr_body += """<tbody>"""
             suggestions_labels = dict()
             # add all suggestions related to each label
@@ -887,8 +887,8 @@ class PRCodeSuggestions:
 {example_code.rstrip()}
 """
                     if suggestion.get('score_why'):
-                        pr_body += f"<details><summary>Suggestion importance[1-10]: {suggestion['score']}</summary>\n\n"
-                        pr_body += f"__\n\nWhy: {suggestion['score_why']}\n\n"
+                        pr_body += f"<details><summary>Mức độ quan trọng của đề xuất[1-10]: {suggestion['score']}</summary>\n\n"
+                        pr_body += f"__\n\nLý do: {suggestion['score_why']}\n\n"
                         pr_body += f"</details>"
 
                     pr_body += f"</details>"

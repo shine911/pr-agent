@@ -175,12 +175,12 @@ class PRReviewer:
                 if hasattr(self.git_provider, "previous_review") and self.git_provider.previous_review is not None:
                     previous_review_url = getattr(self.git_provider.previous_review, "html_url", "") or ""
                 if get_settings().config.publish_output:
-                    self.git_provider.publish_comment(f"Incremental Review Skipped\n"
-                                    f"No files were changed since the [previous PR Review]({previous_review_url})")
+                    self.git_provider.publish_comment(f"Bỏ qua đánh giá gia tăng\n"
+                                    f"Không có file nào thay đổi kể từ [lần đánh giá PR trước đó]({previous_review_url})")
                 return None
 
             if get_settings().config.publish_output and not get_settings().config.get('is_auto_command', False):
-                self.git_provider.publish_comment("Preparing review...", is_temporary=True)
+                self.git_provider.publish_comment("Đang chuẩn bị đánh giá...", is_temporary=True)
 
             await retry_with_fallback_models(self._prepare_prediction, model_type=ModelType.REGULAR)
             if not self.prediction:
@@ -461,8 +461,8 @@ class PRReviewer:
             is_auto_approved = self.git_provider.auto_approve()
             if is_auto_approved:
                 get_logger().info("Auto-approved PR")
-                self.git_provider.publish_comment("Auto-approved PR")
+                self.git_provider.publish_comment("Đã tự động phê duyệt PR")
         else:
             get_logger().info("Auto-approval option is disabled")
-            self.git_provider.publish_comment("Auto-approval option for PR-Agent is disabled. "
-                                              "You can enable it via a [configuration file](https://github.com/Codium-ai/pr-agent/blob/main/docs/REVIEW.md#auto-approval-1)")
+            self.git_provider.publish_comment("Tùy chọn tự động phê duyệt của PR-Agent đang bị tắt. "
+                                              "Bạn có thể bật nó qua một [file cấu hình](https://github.com/Codium-ai/pr-agent/blob/main/docs/REVIEW.md#auto-approval-1)")

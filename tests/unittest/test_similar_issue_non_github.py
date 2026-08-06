@@ -30,7 +30,7 @@ async def test_similar_issue_non_github_publishes_message(monkeypatch):
 
     assert result == ""
     assert fake_provider.comments == [
-        "The /similar_issue tool is currently supported only for GitHub."
+        "Công cụ /similar_issue hiện chỉ được hỗ trợ trên GitHub."
     ]
 
 

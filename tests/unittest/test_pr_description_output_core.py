@@ -388,7 +388,7 @@ class TestProcessPRFilesPrediction:
 
         body, _ = obj.process_pr_files_prediction("", value)
 
-        assert "<details><summary>2 files</summary>" in body
+        assert "<details><summary>2 file</summary>" in body
 
 
 # ---------------------------------------------------------------------------

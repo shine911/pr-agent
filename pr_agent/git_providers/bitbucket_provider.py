@@ -403,7 +403,7 @@ class BitbucketProvider(GitProvider):
                     latest_commit_url = self.get_latest_commit_url()
                     comment_url = self.get_comment_url(comment)
                     if update_header:
-                        updated_header = f"{initial_header}\n\n#### ({name.capitalize()} updated until commit {latest_commit_url})\n"
+                        updated_header = f"{initial_header}\n\n#### ({name.capitalize()} đã cập nhật đến commit {latest_commit_url})\n"
                         pr_comment_updated = pr_comment.replace(initial_header, updated_header)
                     else:
                         pr_comment_updated = pr_comment
@@ -412,7 +412,7 @@ class BitbucketProvider(GitProvider):
                     response = comment._update_data(comment.put(None, data=d))
                     if final_update_message:
                         self.publish_comment(
-                            f"**[Persistent {name}]({comment_url})** updated to latest commit {latest_commit_url}")
+                            f"**[{name.capitalize()} thường trực]({comment_url})** đã được cập nhật đến commit mới nhất {latest_commit_url}")
                     return
         except Exception as e:
             get_logger().exception(f"Failed to update persistent review, error: {e}")

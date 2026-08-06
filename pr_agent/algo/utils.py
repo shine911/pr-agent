@@ -159,12 +159,12 @@ def convert_to_markdown_v2(output_data: dict,
         markdown_text += f"{PRReviewHeader.REGULAR.value} 🔍\n\n"
     else:
         markdown_text += f"{PRReviewHeader.INCREMENTAL.value} 🔍\n\n"
-        markdown_text += f"⏮️ Review for commits since previous PR-Agent review {incremental_review}.\n\n"
+        markdown_text += f"⏮️ Đánh giá cho các commit kể từ lần đánh giá PR-Agent trước {incremental_review}.\n\n"
     if not output_data or not output_data.get('review', {}):
         return ""
 
     if get_settings().get("pr_reviewer.enable_intro_text", False):
-        markdown_text += f"Here are some key observations to aid the review process:\n\n"
+        markdown_text += f"Đây là một số quan sát chính giúp hỗ trợ quá trình đánh giá:\n\n"
 
     if gfm_supported:
         markdown_text += "<table>\n"
@@ -177,7 +177,7 @@ def convert_to_markdown_v2(output_data: dict,
         key_nice = key.replace('_', ' ').capitalize()
         emoji = emojis.get(key_nice, "")
         if 'Estimated effort to review' in key_nice:
-            key_nice = 'Estimated effort to review'
+            key_nice = 'Công sức ước tính để đánh giá'
             value = str(value).strip()
             if value.isnumeric():
                 value_int = int(value)
@@ -200,58 +200,58 @@ def convert_to_markdown_v2(output_data: dict,
             if gfm_supported:
                 markdown_text += f"<tr><td>"
                 if is_value_no(value):
-                    markdown_text += f"{emoji}&nbsp;<strong>No relevant tests</strong>"
+                    markdown_text += f"{emoji}&nbsp;<strong>Không có test liên quan</strong>"
                 else:
-                    markdown_text += f"{emoji}&nbsp;<strong>PR contains tests</strong>"
+                    markdown_text += f"{emoji}&nbsp;<strong>PR có chứa test</strong>"
                 markdown_text += f"</td></tr>\n"
             else:
                 if is_value_no(value):
-                    markdown_text += f'### {emoji} No relevant tests\n\n'
+                    markdown_text += f'### {emoji} Không có test liên quan\n\n'
                 else:
-                    markdown_text += f"### {emoji} PR contains tests\n\n"
+                    markdown_text += f"### {emoji} PR có chứa test\n\n"
         elif 'ticket compliance check' in key_nice.lower():
             markdown_text = ticket_markdown_logic(emoji, markdown_text, value, gfm_supported)
         elif 'contribution time cost estimate' in key_nice.lower():
             if gfm_supported:
-                markdown_text += f"<tr><td>{emoji}&nbsp;<strong>Contribution time estimate</strong> (best, average, worst case): "
-                markdown_text += f"{value['best_case'].replace('m', ' minutes')} | {value['average_case'].replace('m', ' minutes')} | {value['worst_case'].replace('m', ' minutes')}"
+                markdown_text += f"<tr><td>{emoji}&nbsp;<strong>Ước tính thời gian đóng góp</strong> (tốt nhất, trung bình, xấu nhất): "
+                markdown_text += f"{value['best_case'].replace('m', ' phút')} | {value['average_case'].replace('m', ' phút')} | {value['worst_case'].replace('m', ' phút')}"
                 markdown_text += f"</td></tr>\n"
             else:
-                markdown_text += f"### {emoji} Contribution time estimate (best, average, worst case): "
-                markdown_text += f"{value['best_case'].replace('m', ' minutes')} | {value['average_case'].replace('m', ' minutes')} | {value['worst_case'].replace('m', ' minutes')}\n\n"
+                markdown_text += f"### {emoji} Ước tính thời gian đóng góp (tốt nhất, trung bình, xấu nhất): "
+                markdown_text += f"{value['best_case'].replace('m', ' phút')} | {value['average_case'].replace('m', ' phút')} | {value['worst_case'].replace('m', ' phút')}\n\n"
         elif 'security concerns' in key_nice.lower():
             if gfm_supported:
                 markdown_text += f"<tr><td>"
                 if is_value_no(value):
-                    markdown_text += f"{emoji}&nbsp;<strong>No security concerns identified</strong>"
+                    markdown_text += f"{emoji}&nbsp;<strong>Không phát hiện vấn đề an ninh</strong>"
                 else:
-                    markdown_text += f"{emoji}&nbsp;<strong>Security concerns</strong><br><br>\n\n"
+                    markdown_text += f"{emoji}&nbsp;<strong>Vấn đề an ninh</strong><br><br>\n\n"
                     value = emphasize_header(value.strip())
                     markdown_text += f"{value}"
                 markdown_text += f"</td></tr>\n"
             else:
                 if is_value_no(value):
-                    markdown_text += f'### {emoji} No security concerns identified\n\n'
+                    markdown_text += f'### {emoji} Không phát hiện vấn đề an ninh\n\n'
                 else:
-                    markdown_text += f"### {emoji} Security concerns\n\n"
+                    markdown_text += f"### {emoji} Vấn đề an ninh\n\n"
                     value = emphasize_header(value.strip(), only_markdown=True)
                     markdown_text += f"{value}\n\n"
         elif 'todo sections' in key_nice.lower():
             if gfm_supported:
                 markdown_text += "<tr><td>"
                 if is_value_no(value):
-                    markdown_text += f"✅&nbsp;<strong>No TODO sections</strong>"
+                    markdown_text += f"✅&nbsp;<strong>Không có mục TODO</strong>"
                 else:
                     markdown_todo_items = format_todo_items(value, git_provider, gfm_supported)
-                    markdown_text += f"{emoji}&nbsp;<strong>TODO sections</strong>\n<br><br>\n"
+                    markdown_text += f"{emoji}&nbsp;<strong>Mục TODO</strong>\n<br><br>\n"
                     markdown_text += markdown_todo_items
                 markdown_text += "</td></tr>\n"
             else:
                 if is_value_no(value):
-                    markdown_text += f"### ✅ No TODO sections\n\n"
+                    markdown_text += f"### ✅ Không có mục TODO\n\n"
                 else:
                     markdown_todo_items = format_todo_items(value, git_provider, gfm_supported)
-                    markdown_text += f"### {emoji} TODO sections\n\n"
+                    markdown_text += f"### {emoji} Mục TODO\n\n"
                     markdown_text += markdown_todo_items
         elif 'can be split' in key_nice.lower():
             if gfm_supported:
@@ -263,18 +263,18 @@ def convert_to_markdown_v2(output_data: dict,
             if is_value_no(value):
                 if gfm_supported:
                     markdown_text += f"<tr><td>"
-                    markdown_text += f"{emoji}&nbsp;<strong>No major issues detected</strong>"
+                    markdown_text += f"{emoji}&nbsp;<strong>Không phát hiện vấn đề lớn</strong>"
                     markdown_text += f"</td></tr>\n"
                 else:
-                    markdown_text += f"### {emoji} No major issues detected\n\n"
+                    markdown_text += f"### {emoji} Không phát hiện vấn đề lớn\n\n"
             else:
                 issues = value
                 if gfm_supported:
                     markdown_text += f"<tr><td>"
                     # markdown_text += f"{emoji}&nbsp;<strong>{key_nice}</strong><br><br>\n\n"
-                    markdown_text += f"{emoji}&nbsp;<strong>Recommended focus areas for review</strong><br><br>\n\n"
+                    markdown_text += f"{emoji}&nbsp;<strong>Khu vực đề xuất tập trung đánh giá</strong><br><br>\n\n"
                 else:
-                    markdown_text += f"### {emoji} Recommended focus areas for review\n\n#### \n"
+                    markdown_text += f"### {emoji} Khu vực đề xuất tập trung đánh giá\n\n#### \n"
                 for i, issue in enumerate(issues):
                     try:
                         if not issue or not isinstance(issue, dict):
@@ -282,7 +282,7 @@ def convert_to_markdown_v2(output_data: dict,
                         relevant_file = issue.get('relevant_file', '').strip()
                         issue_header = issue.get('issue_header', '').strip()
                         if issue_header.lower() == 'possible bug':
-                            issue_header = 'Possible Issue'  # Make the header less frightening
+                            issue_header = 'Vấn đề có thể xảy ra'  # Make the header less frightening
                         issue_content = issue.get('issue_content', '').strip()
                         start_line = int(str(issue.get('start_line', 0)).strip())
                         end_line = int(str(issue.get('end_line', 0)).strip())
@@ -390,14 +390,14 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
                 # Calculate individual ticket compliance level
                 if fully_compliant_str:
                     if not_compliant_str:
-                        ticket_compliance_level = 'Partially compliant'
+                        ticket_compliance_level = 'Tuân thủ một phần'
                     else:
                         if not requires_further_human_verification:
-                            ticket_compliance_level = 'Fully compliant'
+                            ticket_compliance_level = 'Tuân thủ đầy đủ'
                         else:
-                            ticket_compliance_level = 'PR Code Verified'
+                            ticket_compliance_level = 'PR Đã xác minh mã'
                 elif not_compliant_str:
-                    ticket_compliance_level = 'Not compliant'
+                    ticket_compliance_level = 'Không tuân thủ'
 
                 # Store the compliance level for aggregation
                 if ticket_compliance_level:
@@ -405,11 +405,11 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
 
                 # build compliance string
                 if fully_compliant_str:
-                    explanation += f"Compliant requirements:\n\n{fully_compliant_str}\n\n"
+                    explanation += f"Yêu cầu đã tuân thủ:\n\n{fully_compliant_str}\n\n"
                 if not_compliant_str:
-                    explanation += f"Non-compliant requirements:\n\n{not_compliant_str}\n\n"
+                    explanation += f"Yêu cầu chưa tuân thủ:\n\n{not_compliant_str}\n\n"
                 if requires_further_human_verification:
-                    explanation += f"Requires further human verification:\n\n{requires_further_human_verification}\n\n"
+                    explanation += f"Cần con người xác minh thêm:\n\n{requires_further_human_verification}\n\n"
                 ticket_compliance_str += f"\n\n**[{ticket_url.split('/')[-1]}]({ticket_url}) - {ticket_compliance_level}**\n\n{explanation}\n\n"
 
                 # for debugging
@@ -425,25 +425,25 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
 
         # Calculate overall compliance level and emoji
         if all_compliance_levels:
-            if all(level == 'Fully compliant' for level in all_compliance_levels):
-                compliance_level = 'Fully compliant'
+            if all(level == 'Tuân thủ đầy đủ' for level in all_compliance_levels):
+                compliance_level = 'Tuân thủ đầy đủ'
                 compliance_emoji = '✅'
-            elif all(level == 'PR Code Verified' for level in all_compliance_levels):
-                compliance_level = 'PR Code Verified'
+            elif all(level == 'PR Đã xác minh mã' for level in all_compliance_levels):
+                compliance_level = 'PR Đã xác minh mã'
                 compliance_emoji = '✅'
-            elif any(level == 'Not compliant' for level in all_compliance_levels):
+            elif any(level == 'Không tuân thủ' for level in all_compliance_levels):
                 # If there's a mix of compliant and non-compliant tickets
-                if any(level in ['Fully compliant', 'PR Code Verified'] for level in all_compliance_levels):
-                    compliance_level = 'Partially compliant'
+                if any(level in ['Tuân thủ đầy đủ', 'PR Đã xác minh mã'] for level in all_compliance_levels):
+                    compliance_level = 'Tuân thủ một phần'
                     compliance_emoji = '🔶'
                 else:
-                    compliance_level = 'Not compliant'
+                    compliance_level = 'Không tuân thủ'
                     compliance_emoji = '❌'
-            elif any(level == 'Partially compliant' for level in all_compliance_levels):
-                compliance_level = 'Partially compliant'
+            elif any(level == 'Tuân thủ một phần' for level in all_compliance_levels):
+                compliance_level = 'Tuân thủ một phần'
                 compliance_emoji = '🔶'
             else:
-                compliance_level = 'PR Code Verified'
+                compliance_level = 'PR Đã xác minh mã'
                 compliance_emoji = '✅'
 
             # Set extra statistics outside the ticket loop
@@ -452,11 +452,11 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
         # editing table row for ticket compliance analysis
         if gfm_supported:
             markdown_text += f"<tr><td>\n\n"
-            markdown_text += f"**{emoji} Ticket compliance analysis {compliance_emoji}**\n\n"
+            markdown_text += f"**{emoji} Phân tích tuân thủ ticket {compliance_emoji}**\n\n"
             markdown_text += ticket_compliance_str
             markdown_text += f"</td></tr>\n"
         else:
-            markdown_text += f"### {emoji} Ticket compliance analysis {compliance_emoji}\n\n"
+            markdown_text += f"### {emoji} Phân tích tuân thủ ticket {compliance_emoji}\n\n"
             markdown_text += ticket_compliance_str + "\n\n"
 
     return markdown_text
@@ -465,20 +465,20 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
 def process_can_be_split(emoji, value):
     try:
         # key_nice = "Can this PR be split?"
-        key_nice = "Multiple PR themes"
+        key_nice = "Nhiều chủ đề PR"
         markdown_text = ""
         if not value or isinstance(value, list) and len(value) == 1:
             value = "No"
             # markdown_text += f"<tr><td> {emoji}&nbsp;<strong>{key_nice}</strong></td><td>\n\n{value}\n\n</td></tr>\n"
             # markdown_text += f"### {emoji} No multiple PR themes\n\n"
-            markdown_text += f"{emoji} <strong>No multiple PR themes</strong>\n\n"
+            markdown_text += f"{emoji} <strong>Không có nhiều chủ đề PR</strong>\n\n"
         else:
             markdown_text += f"{emoji} <strong>{key_nice}</strong><br><br>\n\n"
             for i, split in enumerate(value):
                 title = split.get('title', '')
                 relevant_files = split.get('relevant_files', [])
-                markdown_text += f"<details><summary>\nSub-PR theme: <b>{title}</b></summary>\n\n"
-                markdown_text += f"___\n\nRelevant files:\n\n"
+                markdown_text += f"<details><summary>\nChủ đề Sub-PR: <b>{title}</b></summary>\n\n"
+                markdown_text += f"___\n\nCác file liên quan:\n\n"
                 for file in relevant_files:
                     markdown_text += f"- {file}\n"
                 markdown_text += f"___\n\n"
@@ -1279,8 +1279,8 @@ def show_relevant_configurations(relevant_section: str) -> str:
         skip_keys.extend(extra_skip_keys)
 
     markdown_text = ""
-    markdown_text += "\n<hr>\n<details> <summary><strong>🛠️ Relevant configurations:</strong></summary> \n\n"
-    markdown_text +="<br>These are the relevant [configurations](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml) for this tool:\n\n"
+    markdown_text += "\n<hr>\n<details> <summary><strong>🛠️ Cấu hình liên quan:</strong></summary> \n\n"
+    markdown_text +="<br>Đây là các [cấu hình](https://github.com/Codium-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml) liên quan cho công cụ này:\n\n"
     markdown_text += f"**[config**]\n```yaml\n\n"
     for key, value in get_settings().config.items():
         if key in skip_keys:
