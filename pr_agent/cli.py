@@ -135,11 +135,16 @@ def run(inargs=None, args=None):
     get_settings().set("CONFIG.EXTRA_CONFIG_URL", getattr(args, "extra_config_url", None))
 
     async def inner():
+        # Default to propagating tool-internal errors so a failed run is
+        # distinguishable from an empty one and can surface as a non-zero
+        # exit code below; placed before args.rest so an explicit
+        # --config.propagate_tool_errors= from the caller still wins.
+        request = [command, "--config.propagate_tool_errors=true"] + args.rest
         if args.issue_url:
-            result = await asyncio.create_task(PRAgent().handle_request(args.issue_url, [command] + args.rest))
+            result = await asyncio.create_task(PRAgent().handle_request(args.issue_url, request))
         else:
             target = args.pr_url if args.pr_url else "local_diff"
-            result = await asyncio.create_task(PRAgent().handle_request(target, [command] + args.rest))
+            result = await asyncio.create_task(PRAgent().handle_request(target, request))
 
         # litellm defers its success/failure callbacks onto the event loop, which
         # asyncio.run() below tears down the moment this coroutine returns. Give
@@ -155,6 +160,7 @@ def run(inargs=None, args=None):
     result = asyncio.run(inner())
     if not result:
         parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == '__main__':
