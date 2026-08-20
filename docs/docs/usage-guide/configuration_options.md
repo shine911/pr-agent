@@ -8,7 +8,7 @@ There are four main ways to set persistent configurations:
 
 In terms of precedence, wiki configurations will override local configurations, local configurations will override global configurations, and global configurations will override an external configuration URL.
 
-The wiki `.pr_agent.toml` is also the highest-precedence layer overall: wiki values override environment variables on conflicting keys.
+The wiki `.pr_agent.toml` is also the highest-precedence layer overall: wiki values override environment variables on conflicting keys. However, this applies only after the Git provider has been constructed — settings the provider reads during initialization, such as `GITLAB.PERSONAL_ACCESS_TOKEN`, cannot be changed by wiki values.
 
 
 For a list of all possible configurations, see the [configuration options](https://github.com/the-pr-agent/pr-agent/blob/main/pr_agent/settings/configuration.toml) page.
@@ -40,7 +40,7 @@ generate_ai_title=true
 
 PR-Agent will know to remove the surrounding quotes when reading the configuration content.
 
-The wiki `.pr_agent.toml` has the highest precedence of all configuration layers: wiki values override environment variables on conflicting keys.
+The wiki `.pr_agent.toml` has the highest precedence of all configuration layers: wiki values override environment variables on conflicting keys. Note that this holds only for settings read after the Git provider is constructed; provider-initialization settings such as `GITLAB.PERSONAL_ACCESS_TOKEN` are consumed when the provider is created and cannot be overridden by wiki values.
 
 ## Local configuration file
 
@@ -200,7 +200,7 @@ built-in defaults
           < wiki .pr_agent.toml
 ```
 
-The wiki `.pr_agent.toml` is the highest-precedence layer: it overrides environment variables on conflicting keys.
+The wiki `.pr_agent.toml` is the highest-precedence layer: it overrides environment variables on conflicting keys. As with every layer below it, this applies only after the Git provider has been constructed — provider-initialization settings such as `GITLAB.PERSONAL_ACCESS_TOKEN` are already read when the provider is created and cannot be changed by later wiki settings.
 
 This means an external URL acts as an organization-wide *default* that any team can still override with their own `pr-agent-settings` or repo-local `.pr_agent.toml`.
 
