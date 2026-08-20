@@ -380,6 +380,16 @@ callback_timeout_seconds = 30 # max seconds to wait for pending litellm callback
 # model_id = "" # Optional: Custom inference profile ID for Amazon Bedrock
 cache_control_injection_points = [] # Optional: enable Anthropic prompt caching via LiteLLM, e.g. [{location = "message", role = "system"}] (https://docs.litellm.ai/docs/tutorials/prompt_caching)
 
+[model_cost]
+# Estimated USD cost per 1,000,000 tokens, used to log the money cost of each
+# command run. Values follow OpenAI API standard short-context rates as of
+# 2026-07-30 (GPT-5.6 Luna -80%, Terra -20%, Sol unchanged). Override per-model
+# in .pr_agent.toml when your provider/reseller charges different rates
+# (Bedrock, regional endpoints, long-context tiers).
+"gpt-5.6-luna" = { input = 0.20, output = 1.20, cached_input = 0.02 }
+"gpt-5.6-terra" = { input = 2.00, output = 12.00, cached_input = 0.20 }
+"gpt-5.6-sol" = { input = 5.00, output = 30.00, cached_input = 0.50 }
+
 [openrouter]
 # OpenRouter provider routing, reasoning control and output cap. These apply only
 # to models addressed as "openrouter/...". The API key and api_base live in
