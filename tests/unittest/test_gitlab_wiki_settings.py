@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from gitlab.v4.objects import Project, ProjectFile, ProjectWiki
+from gitlab.v4.objects import ProjectFile, ProjectWiki
 from pr_agent.git_providers import git_provider as _gp
 from pr_agent.git_providers.gitlab_provider import GitLabProvider
 
@@ -32,10 +32,6 @@ class TestGitLabWikiSettings:
                 "GITLAB.PERSONAL_ACCESS_TOKEN": "fake_token"
             }.get(key, default)
 
-            # Mock configuration.get for use_wiki_settings_file
-            mock_settings.return_value.config.get.side_effect = lambda key, default=None: {
-                "use_wiki_settings_file": True
-            }.get(key, default)
             # Disable global settings by default (these tests focus on wiki/local)
             mock_settings.return_value.config.use_global_settings_file = False
 
@@ -84,15 +80,22 @@ class TestGitLabWikiSettings:
 
         assert settings == [("wiki", 'key = "value_wiki_md"')]
 
-    def test_get_repo_settings_wiki_disabled(self, gitlab_provider, mock_project):
+    def test_get_repo_settings_wiki_ignores_disable_flag(self, gitlab_provider, mock_project):
+        # The wiki fetch has no opt-out flag anymore: use_wiki_settings_file=false
+        # does not stop the load (failures fall back to the local repo file).
         mock_project.files.get.side_effect = Exception("404")
 
-        with patch('pr_agent.git_providers.gitlab_provider.get_settings') as mock_settings:
-             mock_settings.return_value.config.get.side_effect = lambda key, default=None: {
-                 "use_wiki_settings_file": False
-             }.get(key, default)
-             mock_settings.return_value.config.use_global_settings_file = False
+        mock_wiki_page = MagicMock(ProjectWiki)
+        mock_wiki_page.content = 'key = "value_wiki"'
+        mock_project.wikis.get.side_effect = None
+        mock_project.wikis.get.return_value = mock_wiki_page
 
-             settings = gitlab_provider.get_repo_settings()
-             assert settings == ""
-             mock_project.wikis.get.assert_not_called()
+        with patch('pr_agent.git_providers.gitlab_provider.get_settings') as mock_settings:
+            mock_settings.return_value.config.get.side_effect = lambda key, default=None: {
+                "use_wiki_settings_file": False
+            }.get(key, default)
+            mock_settings.return_value.config.use_global_settings_file = False
+
+            settings = gitlab_provider.get_repo_settings()
+            assert settings == [("wiki", 'key = "value_wiki"')]
+            mock_project.wikis.get.assert_any_call('.pr_agent.toml')

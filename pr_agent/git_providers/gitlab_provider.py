@@ -1258,26 +1258,26 @@ class GitLabProvider(GitProvider):
         global_settings = self._get_global_repo_settings()
         if global_settings:
             settings_files.append(("global", global_settings))
-        # Try from the wiki project
-        if get_settings().config.get("use_wiki_settings_file", True):
-            try:
-                get_logger().info("Attempting to fetch settings from wiki...")
-                wiki_project_id = get_settings().get("GITLAB.WIKI_PROJECT_ID", self.id_project)
-                project = self.gl.projects.get(wiki_project_id)
-                wiki_page = None
-                for slug in ['.pr_agent.toml', 'pr-agent-settings', 'pr_agent.toml']:
-                    try:
-                        wiki_page = project.wikis.get(slug)
-                        if wiki_page:
-                            break
-                    except Exception:
-                        continue
-                if wiki_page:
-                    wiki_contents = self._extract_toml_from_markdown(wiki_page.content)
-                    if wiki_contents:
-                        settings_files.append(("wiki", wiki_contents))
-            except Exception as e:
-                get_logger().warning(f"Failed to fetch settings from wiki: {e}")
+        # Try from the wiki project. Always attempted: the load failure is caught
+        # below and falls back to the local repo file, so no opt-out flag is needed.
+        try:
+            get_logger().info("Attempting to fetch settings from wiki...")
+            wiki_project_id = get_settings().get("GITLAB.WIKI_PROJECT_ID", self.id_project)
+            project = self.gl.projects.get(wiki_project_id)
+            wiki_page = None
+            for slug in ['.pr_agent.toml', 'pr-agent-settings', 'pr_agent.toml']:
+                try:
+                    wiki_page = project.wikis.get(slug)
+                    if wiki_page:
+                        break
+                except Exception:
+                    continue
+            if wiki_page:
+                wiki_contents = self._extract_toml_from_markdown(wiki_page.content)
+                if wiki_contents:
+                    settings_files.append(("wiki", wiki_contents))
+        except Exception as e:
+            get_logger().warning(f"Failed to fetch settings from wiki: {e}")
         # Fall back to local repo file
         try:
             main_branch = self.gl.projects.get(self.id_project).default_branch
