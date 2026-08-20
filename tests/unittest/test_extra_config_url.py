@@ -494,6 +494,16 @@ class _FakeGitProvider:
         return self._repo_toml
 
 
+class _CategorizedGitProvider:
+    """Provider returning categorized sources (global/wiki/local) like GitLab."""
+
+    def __init__(self, sources):
+        self._sources = sources
+
+    def get_repo_settings(self):
+        return self._sources
+
+
 @pytest.fixture
 def mock_git_provider(monkeypatch):
     """Replace get_git_provider_with_context with a factory the test controls."""
@@ -646,6 +656,60 @@ repo_only = "repo-value"
         "env-sourced value must survive a repo-local merge as well"
     )
     assert get_settings().get(f"{_TEST_SECTION}.repo_only") == "repo-value"
+
+
+def test_wiki_settings_override_env(tmp_path, settings_sandbox, mock_git_provider, monkeypatch):
+    """The wiki .pr_agent.toml is the highest-precedence layer: it wins over env
+    vars on conflicting keys, while env-only keys (absent from the wiki) and
+    wiki-only keys both survive."""
+    env_key = f"{_TEST_SECTION.upper()}__TOKEN"
+    env_only_key = f"{_TEST_SECTION.upper()}__ONLY_ENV"
+    monkeypatch.setenv(env_key, "from-env")
+    monkeypatch.setenv(env_only_key, "env-only-value")
+    from dynaconf.loaders import env_loader as _env_loader
+    _env_loader.load(get_settings())
+
+    wiki_toml = f"""
+[{_TEST_SECTION}]
+token = "from-wiki"
+wiki_only = "wiki-value"
+""".encode()
+    mock_git_provider["provider"] = _CategorizedGitProvider([("wiki", wiki_toml)])
+
+    apply_repo_settings("https://example.com/pr/1")
+
+    assert get_settings().get(f"{_TEST_SECTION}.token") == "from-wiki", (
+        "wiki must override the env-sourced value"
+    )
+    assert get_settings().get(f"{_TEST_SECTION}.wiki_only") == "wiki-value"
+    assert get_settings().get(f"{_TEST_SECTION}.only_env") == "env-only-value", (
+        "env-only keys not defined in the wiki must survive"
+    )
+
+
+def test_wiki_highest_priority_beats_local_and_env(tmp_path, settings_sandbox, mock_git_provider, monkeypatch):
+    """Full chain: global < local < env < wiki. GitLab returns sources as
+    [global, wiki, local]; wiki must be reordered to apply last, on top of the
+    env-var layer."""
+    env_key = f"{_TEST_SECTION.upper()}__TOKEN"
+    monkeypatch.setenv(env_key, "from-env")
+    from dynaconf.loaders import env_loader as _env_loader
+    _env_loader.load(get_settings())
+
+    global_toml = f'[{_TEST_SECTION}]\ntoken = "from-global"\n'.encode()
+    local_toml = f'[{_TEST_SECTION}]\ntoken = "from-local"\n'.encode()
+    wiki_toml = f'[{_TEST_SECTION}]\ntoken = "from-wiki"\n'.encode()
+    mock_git_provider["provider"] = _CategorizedGitProvider([
+        ("global", global_toml),
+        ("wiki", wiki_toml),
+        ("local", local_toml),
+    ])
+
+    apply_repo_settings("https://example.com/pr/1")
+
+    assert get_settings().get(f"{_TEST_SECTION}.token") == "from-wiki", (
+        "wiki must be the highest-precedence layer"
+    )
 
 
 def test_env_var_visible_to_git_provider_after_extra_merge(

@@ -291,7 +291,15 @@ def apply_repo_settings(pr_url):
                 # Loading them in a single Dynaconf call would fail all sources on one bad file and
                 # misattribute the error to the last source; applying per-scope keeps error reporting
                 # (and redaction) accurate and lets valid sources still take effect.
-                for category, settings_content in _normalize_repo_settings(repo_settings):
+                repo_settings_sources = _normalize_repo_settings(repo_settings)
+                # The GitLab wiki .pr_agent.toml is the highest-precedence layer, above
+                # environment variables: apply it LAST (on top of env-sourced values) and
+                # skip the env re-application after its merge so wiki values win on conflicts.
+                repo_settings_sources = (
+                    [source for source in repo_settings_sources if source[0] != "wiki"]
+                    + [source for source in repo_settings_sources if source[0] == "wiki"]
+                )
+                for category, settings_content in repo_settings_sources:
                     fd, repo_settings_file = tempfile.mkstemp(suffix='.toml')
                     repo_settings_files.append(repo_settings_file)
                     if isinstance(settings_content, str):
@@ -301,7 +309,10 @@ def apply_repo_settings(pr_url):
                     with os.fdopen(fd, "wb") as settings_file_handle:
                         settings_file_handle.write(settings_content)
                     try:
-                        _apply_repo_settings_file(repo_settings_file)
+                        _apply_repo_settings_file(
+                            repo_settings_file,
+                            reapply_env=(category != "wiki"),
+                        )
                     except Exception as e:
                         get_logger().warning(f"Failed to apply repo {category} settings, error: {str(e)}")
                         config_errors.append({'error': str(e), 'settings': settings_content, 'category': category})
@@ -322,12 +333,16 @@ def apply_repo_settings(pr_url):
         set_claude_model()
 
 
-def _apply_repo_settings_file(repo_settings_file):
+def _apply_repo_settings_file(repo_settings_file, reapply_env=True):
     """Load a single repo settings file and merge its allowed keys into the global settings.
 
     Enforces the per-repo host-key restrictions and logs only section names (values may contain
     secrets). Raises on load/parse failure so the caller can attribute the error to the correct
     settings scope (e.g. 'global' vs 'local').
+
+    ``reapply_env`` controls the final env-var precedence restoration: it defaults to True so env
+    vars stay the highest layer, but callers may pass False to let a settings scope (the wiki
+    highest-priority mode) win over env-sourced values.
     """
     # Enforce the same size cap as the loader BEFORE parsing, so an oversized file can't be fully
     # read/parsed in-process (OOM/CPU) by the explicit validation below.
@@ -365,12 +380,20 @@ def _apply_repo_settings_file(repo_settings_file):
                 continue
         section_dict = copy.deepcopy(get_settings().as_dict().get(section.upper(), {}))
         for key, value in contents.items():
+            # Remove any case-variant duplicate already present (env-sourced keys are stored
+            # UPPERCASE by Dynaconf's env_loader). Without this, the file key and the env key
+            # coexist and case-insensitive lookups resolve to the env variant, so the file value
+            # could never win — even when env re-application is intentionally skipped.
+            for existing in [k for k in section_dict if k.lower() == key.lower() and k != key]:
+                del section_dict[existing]
             section_dict[key] = value
         get_settings().unset(section)
         get_settings().set(section, section_dict, merge=False)
     # Same precedence-restoration rationale as the extra-config path: env-sourced values
-    # must remain the highest layer.
-    _reapply_env_overrides()
+    # must remain the highest layer — unless this scope is allowed to override them
+    # (wiki highest-priority mode), in which case the caller passes reapply_env=False.
+    if reapply_env:
+        _reapply_env_overrides()
     # Do NOT log the merged dict: repo/global .pr_agent.toml may contain secrets
     # (e.g. openai.key, gitlab.personal_access_token) that would otherwise leak into
     # CI logs. Section names are safe and sufficient for debugging.
