@@ -13,6 +13,12 @@ To see what changed between two versions, use the compare view — for example
 
 Changes made in this fork on top of upstream, not reflected in upstream releases:
 
+### 2026-08-20
+
+#### Enhanced
+
+- Log a per-command `Run summary:` line (model, prompt/completion/total tokens, estimated USD cost, AI calls, duration) at the end of every command, so CI pipelines can attribute usage and spend. Cost is priced per AI call from `[model_cost]` settings (GPT-5.6 Luna/Terra/Sol defaults, OpenAI API rates as of 2026-07-30; overridable in `.pr_agent.toml`), with cached prompt tokens billed at the cache-hit rate.
+
 ### 2026-04-13
 
 #### Enhanced

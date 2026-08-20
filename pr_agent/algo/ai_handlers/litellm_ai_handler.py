@@ -359,7 +359,7 @@ class LiteLLMAIHandler(BaseAiHandler):
 
         Streaming models return a MockResponse without `usage`, so tokens stay unset.
         """
-        record_ai_call(getattr(response, "usage", None))
+        record_ai_call(getattr(response, "usage", None), getattr(response, "model", None))
 
     def _configure_claude_extended_thinking(self, model: str, kwargs: dict) -> dict:
         """

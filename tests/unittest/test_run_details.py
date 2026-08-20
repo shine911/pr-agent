@@ -4,7 +4,8 @@ import pytest
 
 from pr_agent.algo.run_details import (RunDetails, add_token_usage,
                                        get_run_details, init_run_details,
-                                       record_ai_call, record_model_used)
+                                       log_run_summary, record_ai_call,
+                                       record_model_used)
 
 
 class _Usage:
@@ -25,6 +26,8 @@ def test_init_returns_fresh_instance_with_zeroed_counters():
     assert details.prompt_tokens == 0
     assert details.completion_tokens == 0
     assert details.total_tokens == 0
+    assert details.cached_prompt_tokens == 0
+    assert details.cost_usd == 0
     assert details.num_ai_calls == 0
     assert details.has_token_usage is False
     assert details.duration_seconds >= 0
@@ -152,6 +155,91 @@ async def test_concurrent_runs_keep_collectors_isolated():
     assert second.prompt_tokens == 20
     assert second.completion_tokens == 2
     assert second.total_tokens == 22
+
+
+def test_add_token_usage_tracks_cached_tokens_and_cost():
+    init_run_details()
+
+    usage = _Usage(10000, 500, 10500)
+    usage.prompt_tokens_details = type("_Details", (), {"cached_tokens": 1000})()
+    add_token_usage(usage, "gpt-5.6-luna")
+
+    details = get_run_details()
+    assert details.cached_prompt_tokens == 1000
+    assert details.cost_usd == pytest.approx(
+        (9000 * 0.20 + 1000 * 0.02 + 500 * 1.20) / 1_000_000
+    )
+
+
+def test_add_token_usage_reads_cached_tokens_from_dict():
+    init_run_details()
+
+    add_token_usage(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 5,
+            "total_tokens": 105,
+            "prompt_tokens_details": {"cached_tokens": 40},
+        },
+        "gpt-5.6-luna",
+    )
+
+    details = get_run_details()
+    assert details.cached_prompt_tokens == 40
+    assert details.cost_usd == pytest.approx(
+        (60 * 0.20 + 40 * 0.02 + 5 * 1.20) / 1_000_000
+    )
+
+
+def test_cost_stays_zero_when_model_price_unknown():
+    init_run_details()
+
+    record_ai_call(_Usage(100, 10, 110), "no/such-model-xyz")
+
+    details = get_run_details()
+    assert details.total_tokens == 110
+    assert details.cost_usd == 0
+
+
+def test_log_run_summary_emits_parseable_line():
+    from loguru import logger as loguru_logger
+
+    init_run_details()
+    record_model_used("gpt-5.6-luna", is_fallback=False)
+    record_ai_call(_Usage(10000, 500, 10500), "gpt-5.6-luna")
+
+    records = []
+    sink_id = loguru_logger.add(records.append)
+    try:
+        log_run_summary("review")
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert len(records) == 1
+    text = str(records[0])
+    assert "command=review" in text
+    assert "model=gpt-5.6-luna" in text
+    assert "prompt_tokens=10000" in text
+    assert "completion_tokens=500" in text
+    assert "total_tokens=10500" in text
+    # (10000 * 0.20 + 500 * 1.20) / 1M
+    assert "cost_usd=0.0026" in text
+    assert "ai_calls=1" in text
+
+
+def test_log_run_summary_skipped_without_model_or_calls():
+    from loguru import logger as loguru_logger
+
+    init_run_details()
+
+    records = []
+    sink_id = loguru_logger.add(records.append)
+    try:
+        log_run_summary("help")
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert records == []
 
 
 def test_helpers_are_noops_when_not_initialized():
