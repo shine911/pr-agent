@@ -8,6 +8,8 @@ There are four main ways to set persistent configurations:
 
 In terms of precedence, wiki configurations will override local configurations, local configurations will override global configurations, and global configurations will override an external configuration URL.
 
+The wiki `.pr_agent.toml` is also the highest-precedence layer overall: wiki values override environment variables on conflicting keys.
+
 
 For a list of all possible configurations, see the [configuration options](https://github.com/the-pr-agent/pr-agent/blob/main/pr_agent/settings/configuration.toml) page.
 In addition to general configuration options, each tool has its own configurations. For example, the `review` tool will use parameters from the [pr_reviewer](https://github.com/the-pr-agent/pr-agent/blob/main/pr_agent/settings/configuration.toml#L76) section in the configuration file.
@@ -37,6 +39,8 @@ generate_ai_title=true
 ```
 
 PR-Agent will know to remove the surrounding quotes when reading the configuration content.
+
+The wiki `.pr_agent.toml` has the highest precedence of all configuration layers: wiki values override environment variables on conflicting keys.
 
 ## Local configuration file
 
@@ -192,9 +196,11 @@ built-in defaults
   < --extra_config_url
     < global pr-agent-settings
       < local .pr_agent.toml (repo default branch)
-        < wiki .pr_agent.toml
-          < environment variables (PR_AGENT__SECTION__KEY)
+        < environment variables (PR_AGENT__SECTION__KEY)
+          < wiki .pr_agent.toml
 ```
+
+The wiki `.pr_agent.toml` is the highest-precedence layer: it overrides environment variables on conflicting keys.
 
 This means an external URL acts as an organization-wide *default* that any team can still override with their own `pr-agent-settings` or repo-local `.pr_agent.toml`.
 
