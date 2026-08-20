@@ -80,7 +80,7 @@ class TestGitLabWikiSettings:
 
         assert settings == [("wiki", 'key = "value_wiki_md"')]
 
-    def test_get_repo_settings_wiki_ignores_disable_flag(self, gitlab_provider, mock_project):
+    def test_get_repo_settings_wiki_ignores_disable_flag(self, gitlab_provider, mock_project, mock_gitlab_client):
         # The wiki fetch has no opt-out flag anymore: use_wiki_settings_file=false
         # does not stop the load (failures fall back to the local repo file).
         mock_project.files.get.side_effect = Exception("404")
@@ -91,11 +91,21 @@ class TestGitLabWikiSettings:
         mock_project.wikis.get.return_value = mock_wiki_page
 
         with patch('pr_agent.git_providers.gitlab_provider.get_settings') as mock_settings:
+            # Preserve the fixture's existing get() behavior
+            mock_settings.return_value.get.side_effect = lambda key, default=None: {
+                "GITLAB.URL": "https://gitlab.com",
+                "GITLAB.PERSONAL_ACCESS_TOKEN": "fake_token"
+            }.get(key, default)
+            # Preserve the fixture's config.get behavior and add use_wiki_settings_file
             mock_settings.return_value.config.get.side_effect = lambda key, default=None: {
                 "use_wiki_settings_file": False
             }.get(key, default)
+            # Explicitly set use_wiki_settings_file attribute
+            mock_settings.return_value.config.use_wiki_settings_file = False
             mock_settings.return_value.config.use_global_settings_file = False
 
             settings = gitlab_provider.get_repo_settings()
             assert settings == [("wiki", 'key = "value_wiki"')]
             mock_project.wikis.get.assert_any_call('.pr_agent.toml')
+            # Verify GitLab project lookup received "test/repo"
+            mock_gitlab_client.projects.get.assert_any_call("test/repo")

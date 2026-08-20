@@ -534,7 +534,6 @@ class LiteLLMAIHandler(BaseAiHandler):
         reraise=True,  # surface the provider's error; RetryError hides the reason
     )
     async def chat_completion(self, model: str, system: str, user: str, temperature: float = 0.2, img_path: str = None):
-        get_logger().info(f"Using model: {model}")
         # Serialize env-var mutation + Bedrock call for IMDS mode to prevent concurrent
         # requests from interleaving os.environ credentials during asyncio.gather usage.
         # Validate config-derived kwargs before the try/except below, so a malformed value raises a
@@ -552,6 +551,7 @@ class LiteLLMAIHandler(BaseAiHandler):
                 # Capture the original model string so an explicit provider prefix in the
                 # user config (e.g. "azure/gpt-5...") can be preserved when the GPT-5 branch
                 # rebuilds the routed model name below.
+                original_model = model
                 user_model = model
                 # Capture the provider prefix before any rewriting below. Databricks auth/endpoint
                 # selection keys off this; rewriting (e.g. 'azure/' + model when Azure is enabled in
@@ -836,6 +836,12 @@ class LiteLLMAIHandler(BaseAiHandler):
                 if (litellm.api_key and litellm.api_key != DUMMY_LITELLM_API_KEY
                         and not is_databricks):
                     kwargs["api_key"] = litellm.api_key
+
+                # Log the effective model after all normalization (Azure prefix, GPT-5 routing, etc.)
+                if model != original_model:
+                    get_logger().info(f"Using model: {original_model} -> {model}")
+                else:
+                    get_logger().info(f"Using model: {model}")
 
                 # Get completion with automatic streaming detection
                 resp, finish_reason, response_obj = await self._get_completion(**kwargs)
