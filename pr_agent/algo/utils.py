@@ -25,6 +25,7 @@ from starlette_context import context
 
 from pr_agent.algo import MAX_TOKENS
 from pr_agent.algo.git_patch_processing import extract_hunk_lines_from_patch
+from pr_agent.algo.run_details import get_run_details
 from pr_agent.algo.token_handler import TokenEncoder
 from pr_agent.algo.types import FilePatchInfo
 from pr_agent.config_loader import get_settings, global_settings
@@ -64,6 +65,7 @@ class PRReviewHeader(str, Enum):
 
 
 class ReasoningEffort(str, Enum):
+    MAX = "max"
     XHIGH = "xhigh"
     HIGH = "high"
     MEDIUM = "medium"
@@ -123,6 +125,16 @@ def unique_strings(input_list: List[str]) -> List[str]:
             unique_list.append(item)
             seen.add(item)
     return unique_list
+
+
+def _expand_minute_suffix(text: str) -> str:
+    """Replace minute abbreviations like '30m' with '30 minutes'.
+
+    Only replaces when 'm' appears at a word boundary after digits
+    (e.g. "30m" -> "30 minutes"), leaving partial-unit strings like
+    "30ms" or "30min" unchanged.
+    """
+    return re.sub(r'(\d+)m\b', r'\1 minutes', text)
 
 
 def convert_to_markdown_v2(output_data: dict,
@@ -214,11 +226,17 @@ def convert_to_markdown_v2(output_data: dict,
         elif 'contribution time cost estimate' in key_nice.lower():
             if gfm_supported:
                 markdown_text += f"<tr><td>{emoji}&nbsp;<strong>Ước tính thời gian đóng góp</strong> (tốt nhất, trung bình, xấu nhất): "
-                markdown_text += f"{value['best_case'].replace('m', ' phút')} | {value['average_case'].replace('m', ' phút')} | {value['worst_case'].replace('m', ' phút')}"
+                best = _expand_minute_suffix(value['best_case']).replace(' minutes', ' phút')
+                avg = _expand_minute_suffix(value['average_case']).replace(' minutes', ' phút')
+                worst = _expand_minute_suffix(value['worst_case']).replace(' minutes', ' phút')
+                markdown_text += f"{best} | {avg} | {worst}"
                 markdown_text += f"</td></tr>\n"
             else:
                 markdown_text += f"### {emoji} Ước tính thời gian đóng góp (tốt nhất, trung bình, xấu nhất): "
-                markdown_text += f"{value['best_case'].replace('m', ' phút')} | {value['average_case'].replace('m', ' phút')} | {value['worst_case'].replace('m', ' phút')}\n\n"
+                best = _expand_minute_suffix(value['best_case']).replace(' minutes', ' phút')
+                avg = _expand_minute_suffix(value['average_case']).replace(' minutes', ' phút')
+                worst = _expand_minute_suffix(value['worst_case']).replace(' minutes', ' phút')
+                markdown_text += f"{best} | {avg} | {worst}\n\n"
         elif 'security concerns' in key_nice.lower():
             if gfm_supported:
                 markdown_text += f"<tr><td>"
@@ -382,7 +400,7 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
                 requires_further_human_verification = ticket_analysis.get('requires_further_human_verification',
                                                                           '').strip()
 
-                if not fully_compliant_str and not not_compliant_str:
+                if not fully_compliant_str and not not_compliant_str and not requires_further_human_verification:
                     get_logger().debug(f"Ticket compliance has no requirements",
                                        artifact={'ticket_url': ticket_url})
                     continue
@@ -398,6 +416,8 @@ def ticket_markdown_logic(emoji, markdown_text, value, gfm_supported) -> str:
                             ticket_compliance_level = 'PR Đã xác minh code'
                 elif not_compliant_str:
                     ticket_compliance_level = 'Không tuân thủ'
+                elif requires_further_human_verification:
+                    ticket_compliance_level = 'PR Đã xác minh code'
 
                 # Store the compliance level for aggregation
                 if ticket_compliance_level:
@@ -1295,6 +1315,37 @@ def show_relevant_configurations(relevant_section: str) -> str:
     markdown_text += "\n```"
     markdown_text += "\n</details>\n"
     return markdown_text
+
+
+def show_run_details(gfm_supported: bool) -> str:
+    """Render the opt-in run-details section (model, tokens, time cost, AI calls).
+
+    Falls back to a plain, non-collapsible section when the provider does not
+    support GitHub-flavored markdown, so the information stays visible.
+    """
+    details = get_run_details()
+    if details is None or not details.model_used:
+        return ""
+
+    title = "⚙️ Agent run details"
+    lines = [f"- Model: {details.model_used}{' (fallback)' if details.fallback_used else ''}"]
+    if details.has_token_usage:
+        # A counter still at zero after a successful call means the provider never
+        # reported that component, so drop it instead of claiming it was zero.
+        counts = [(details.prompt_tokens, "in"), (details.completion_tokens, "out"),
+                  (details.total_tokens, "total")]
+        reported = [f"{value:,} {label}" for value, label in counts if value]
+        lines.append(f"- Tokens: {' / '.join(reported)}")
+    lines.append(f"- Time cost: {details.duration_seconds:.1f}s")
+    if details.num_ai_calls:
+        lines.append(f"- AI calls: {details.num_ai_calls}")
+    body = "\n".join(lines)
+
+    if gfm_supported:
+        return (f"\n<hr>\n<details> <summary><strong>{title}</strong></summary>\n\n"
+                f"{body}\n\n</details>\n")
+    return f"\n___\n\n**{title}**\n\n{body}\n"
+
 
 def is_value_no(value):
     if not value:
