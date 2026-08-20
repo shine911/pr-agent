@@ -534,6 +534,7 @@ class LiteLLMAIHandler(BaseAiHandler):
         reraise=True,  # surface the provider's error; RetryError hides the reason
     )
     async def chat_completion(self, model: str, system: str, user: str, temperature: float = 0.2, img_path: str = None):
+        get_logger().info(f"Using model: {model}")
         # Serialize env-var mutation + Bedrock call for IMDS mode to prevent concurrent
         # requests from interleaving os.environ credentials during asyncio.gather usage.
         # Validate config-derived kwargs before the try/except below, so a malformed value raises a
