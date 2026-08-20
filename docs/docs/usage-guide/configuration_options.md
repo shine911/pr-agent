@@ -41,7 +41,6 @@ generate_ai_title=true
 PR-Agent will know to remove the surrounding quotes when reading the configuration content.
 
 The wiki `.pr_agent.toml` has the highest precedence of all configuration layers: wiki values override environment variables on conflicting keys. Note that this holds only for settings read after the Git provider is constructed; provider-initialization settings such as `GITLAB.PERSONAL_ACCESS_TOKEN` are consumed when the provider is created and cannot be overridden by wiki values.
-
 ## Local configuration file
 
 `Platforms supported: GitHub, GitLab, Bitbucket, Azure DevOps`

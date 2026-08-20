@@ -4,6 +4,7 @@ import pytest
 
 from pr_agent.algo.types import FilePatchInfo
 from pr_agent.config_loader import get_settings
+from pr_agent.git_providers.git_provider import GitProvider, IncrementalPR
 from pr_agent.tools.pr_code_suggestions import PRCodeSuggestions
 
 
@@ -180,3 +181,72 @@ async def test_push_inline_code_suggestions_falls_back_to_individual_publish_cal
     assert second_retry[0]["relevant_lines_start"] == 2
     assert second_retry[0]["relevant_lines_end"] == 2
     assert "```suggestion\n    return new_worker()" in second_retry[0]["body"]
+
+
+def test_setup_incremental_scope_calls_provider_when_supported():
+    git_provider = MagicMock()
+    git_provider.supports_incremental_kind.return_value = True
+    tool = _make_tool(git_provider)
+    tool.incremental = IncrementalPR(True)
+
+    tool._setup_incremental_scope()
+
+    git_provider.supports_incremental_kind.assert_called_once_with("suggestions")
+    git_provider.get_incremental_commits.assert_called_once_with(tool.incremental, kind="suggestions")
+    assert tool.incremental.is_incremental is True
+
+
+def test_setup_incremental_scope_falls_back_when_unsupported():
+    git_provider = MagicMock()
+    git_provider.supports_incremental_kind.return_value = False
+    tool = _make_tool(git_provider)
+    tool.incremental = IncrementalPR(True)
+
+    tool._setup_incremental_scope()
+
+    git_provider.get_incremental_commits.assert_not_called()
+    assert tool.incremental.is_incremental is False
+
+
+def test_setup_incremental_scope_noop_without_incremental_flag():
+    git_provider = MagicMock()
+    tool = _make_tool(git_provider)
+    tool.incremental = IncrementalPR(False)
+
+    tool._setup_incremental_scope()
+
+    git_provider.supports_incremental_kind.assert_not_called()
+    git_provider.get_incremental_commits.assert_not_called()
+
+
+def test_supports_incremental_kind_defaults_to_false_on_base_provider():
+    # The base-class default must be "no support" so tools fall back to a full run
+    # on providers that never implemented kind-aware incremental anchoring.
+    assert GitProvider.supports_incremental_kind(MagicMock(), "suggestions") is False
+
+
+def test_persistent_update_survives_progress_cleanup_failure():
+    """A failing progress-note cleanup must not abort the persistent update:
+    if the cleanup error propagated, the caller would fall back to publishing
+    a new suggestions thread, re-creating the duplicate-thread bug."""
+    initial_header = "## PR Code Suggestions"
+    existing = MagicMock()
+    existing.body = f"{initial_header}\n<!-- aaa1111 -->\n<table>old suggestions</table>"
+    provider = MagicMock()
+    provider.get_issue_comments.return_value = [existing]
+    provider.get_comment_url.return_value = "https://example.test/comment/1"
+    provider.get_latest_commit_url.return_value = "https://example.test/commit/deadbee"
+    # First edit updates the persistent comment and succeeds; the second edit
+    # (re-labelling the progress note before deletion) fails.
+    provider.edit_comment.side_effect = [None, RuntimeError("cleanup failed")]
+    progress_note = MagicMock()
+
+    result = PRCodeSuggestions.publish_persistent_comment_with_history(
+        provider, f"{initial_header}\n<table>new suggestions</table>", initial_header,
+        update_header=False, name="suggestions", final_update_message=False,
+        progress_response=progress_note)
+
+    assert result is existing
+    assert provider.edit_comment.call_count == 2
+    provider.remove_comment.assert_not_called()
+    provider.publish_comment.assert_not_called()
