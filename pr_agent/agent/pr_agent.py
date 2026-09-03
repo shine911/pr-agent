@@ -1,3 +1,4 @@
+import asyncio
 import shlex
 from functools import partial
 
@@ -109,16 +110,29 @@ class PRAgent:
                 if action == "answer":
                     if notify:
                         notify()
-                    await PRReviewer(pr_url, is_answer=True, args=args, ai_handler=self.ai_handler).run()
+                    coro = PRReviewer(pr_url, is_answer=True, args=args, ai_handler=self.ai_handler).run()
                 elif action == "auto_review":
-                    await PRReviewer(pr_url, is_auto=True, args=args, ai_handler=self.ai_handler).run()
+                    coro = PRReviewer(pr_url, is_auto=True, args=args, ai_handler=self.ai_handler).run()
                 elif action in command2class:
                     if notify:
                         notify()
 
-                    await command2class[action](pr_url, ai_handler=self.ai_handler, args=args).run()
+                    coro = command2class[action](pr_url, ai_handler=self.ai_handler, args=args).run()
                 else:
                     return False
+
+                # Hard ceiling on the whole command: a single stalled network call
+                # (git provider, LLM, ticket tracker...) would otherwise hang until an
+                # external CI pipeline kills the process instead of failing fast.
+                command_timeout = get_settings().config.get("command_timeout", 0)
+                if command_timeout and command_timeout > 0:
+                    try:
+                        await asyncio.wait_for(coro, timeout=command_timeout)
+                    except asyncio.TimeoutError:
+                        get_logger().error(f"Command '{action}' timed out after {command_timeout}s")
+                        return False
+                else:
+                    await coro
             finally:
                 # Emit the per-command usage/cost summary even when the command raised,
                 # so a failed run still accounts for the tokens it consumed.

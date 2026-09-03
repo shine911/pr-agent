@@ -25,6 +25,7 @@ extra_config_url="" # optional URL or path to an additional .pr_agent.toml merge
 disable_auto_feedback = false
 enable_auto_approval = false # auto-approve PR/MR when no code suggestions or issues are found
 ai_timeout=120 # 2 minutes
+command_timeout=1200 # 20 minutes; hard ceiling on a whole command run (e.g. /review), so a stalled call anywhere in the chain (git provider, LLM, ticket tracker) fails fast instead of hanging until the CI pipeline kills it. 0 disables.
 skip_keys = []
 custom_reasoning_model = false # when true, disables system messages and temperature controls for models that don't support chat-style inputs
 response_language="en-US" # Language locales code for PR responses in ISO 3166 and ISO 639 format (e.g., "en-US", "it-IT", "zh-CN", ...)
