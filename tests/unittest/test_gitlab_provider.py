@@ -89,6 +89,21 @@ class TestGitLabProvider:
 
         assert content == ""
 
+    def test_mr_changes_and_diffs_are_fetched_once_per_provider(self, gitlab_provider):
+        # mr.changes() recomputes the MR's full diff server-side and mr.diffs.list()
+        # fetches every diff version; get_diff_files()/get_files()/get_relevant_diff()
+        # used to each re-issue these, turning N inline comments into N redundant
+        # full-diff GitLab API calls. They must be fetched at most once per provider.
+        gitlab_provider.mr.changes.return_value = {"changes": [{"new_path": "a.py"}]}
+
+        gitlab_provider._get_mr_changes()
+        gitlab_provider._get_mr_changes()
+        gitlab_provider._get_mr_diffs_list()
+
+        assert gitlab_provider.mr.changes.call_count == 1
+        # _set_merge_request() already called diffs.list() once during construction.
+        assert gitlab_provider.mr.diffs.list.call_count == 1
+
     def test_get_repo_file_content_loads_from_mr_target_branch(self, gitlab_provider, mock_gitlab_client, mock_project):
         mock_project.default_branch = "main"
         gitlab_provider.mr = MagicMock(target_branch="release-1.0")

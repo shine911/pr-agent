@@ -422,12 +422,38 @@ class GitLabProvider(GitProvider):
     def _set_merge_request(self, merge_request_url: str):
         self.id_project, self.id_mr = self._parse_merge_request_url(merge_request_url)
         self.mr = self._get_merge_request()
+        self._changes_cache = None
+        self._diffs_list_cache = None
         try:
             # the versions endpoint is ordered newest-first, so the latest diff is the first entry
-            self.last_diff = self.mr.diffs.list(get_all=True)[0]
+            self.last_diff = self._get_mr_diffs_list()[0]
         except IndexError as e:
             get_logger().error(f"Could not get diff for merge request {self.id_mr}")
             raise DiffNotFoundError(f"Could not get diff for merge request {self.id_mr}") from e
+
+    def _get_mr_changes(self) -> dict:
+        """Cache `mr.changes()` for the life of this provider instance.
+
+        It's a single GitLab API call that recomputes the MR's full diff server-side -
+        slow on a large MR - but get_diff_files()/get_files()/get_relevant_diff() and the
+        incremental-review path each used to call it fresh, so publishing N inline
+        comments meant N redundant full-diff fetches. The diff is immutable for the
+        life of a single command run, so one fetch is enough.
+        """
+        if getattr(self, "_changes_cache", None) is None:
+            self._changes_cache = self.mr.changes()
+        return self._changes_cache
+
+    def _get_mr_diffs_list(self) -> list:
+        """Cache `mr.diffs.list(get_all=True)` for the life of this provider instance.
+
+        Same redundant-refetch issue as `_get_mr_changes()`: get_relevant_diff() used to
+        re-issue this on every inline comment on top of the one `_set_merge_request()`
+        already did.
+        """
+        if getattr(self, "_diffs_list_cache", None) is None:
+            self._diffs_list_cache = self.mr.diffs.list(get_all=True)
+        return self._diffs_list_cache
 
     # Anchor-note prefixes per incremental "kind". An incremental run looks for the most recent
     # prior note matching ANY of these prefixes and uses its timestamp as the timeline anchor.
@@ -540,7 +566,7 @@ class GitLabProvider(GitProvider):
         try:
             mr_change_paths = {
                 c.get('new_path')
-                for c in self.mr.changes().get('changes', [])
+                for c in self._get_mr_changes().get('changes', [])
                 if c.get('new_path')
             }
         except Exception as e:
@@ -745,7 +771,7 @@ class GitLabProvider(GitProvider):
             if not head_sha_for_content:
                 head_sha_for_content = (self.mr.diff_refs or {}).get('head_sha')
         else:
-            raw_changes = self.mr.changes().get('changes', [])
+            raw_changes = self._get_mr_changes().get('changes', [])
             raw_changes = self._expand_submodule_changes(raw_changes)
             base_sha_for_content = self.mr.diff_refs['base_sha']
             head_sha_for_content = self.mr.diff_refs['head_sha']
@@ -823,7 +849,7 @@ class GitLabProvider(GitProvider):
                 and getattr(self, 'unreviewed_files_map', None)):
             return list(self.unreviewed_files_map.keys())
         if not self.git_files:
-            raw_changes = self.mr.changes().get('changes', [])
+            raw_changes = self._get_mr_changes().get('changes', [])
             raw_changes = self._expand_submodule_changes(raw_changes)
             self.git_files = [c.get('new_path') for c in raw_changes if c.get('new_path')]
         return self.git_files
@@ -1046,13 +1072,16 @@ class GitLabProvider(GitProvider):
                     get_logger().exception(f"Failed to create comment in MR {self.id_mr}")
 
     def get_relevant_diff(self, relevant_file: str, relevant_line_in_file: str) -> Optional[dict]:
-        _changes = self.mr.changes()  # dict
+        # Shallow-copy the cached dict before mutating 'changes' below, so repeated
+        # calls (once per inline comment) don't compound submodule expansion on the
+        # shared cache.
+        _changes = dict(self._get_mr_changes())
         _changes['changes'] = self._expand_submodule_changes(_changes.get('changes', []))
         changes = _changes
         if not changes:
             get_logger().error('No changes found for the merge request.')
             return None
-        all_diffs = self.mr.diffs.list(get_all=True)
+        all_diffs = self._get_mr_diffs_list()
         if not all_diffs:
             get_logger().error('No diffs found for the merge request.')
             return None
