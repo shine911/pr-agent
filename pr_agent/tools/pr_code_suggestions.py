@@ -1545,6 +1545,7 @@ class PRCodeSuggestions:
             else:
                 code_suggestions.append(rendered_suggestion)
 
+        is_successful = False
         suggestions_to_publish = artifact_suggestions if supports_suggestions_artifact else code_suggestions
         if suggestions_to_publish:
             if supports_suggestions_artifact:
