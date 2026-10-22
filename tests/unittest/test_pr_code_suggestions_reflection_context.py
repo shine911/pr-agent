@@ -152,3 +152,36 @@ async def test_reflection_omits_artifact_section_when_absent():
     user = tool.ai_handler.chat_completion.await_args.kwargs["user"]
     assert "CI artifact label" not in user
     assert "<<<ARTIFACT>>>" not in user
+
+
+async def test_reflection_receives_skills_and_repo_context_in_system_prompt():
+    from pr_agent.algo.prompt_fragments import render_skills_prefix
+
+    tool = PRCodeSuggestions.__new__(PRCodeSuggestions)
+    tool.vars = {"skills_context": "Never expose raw zod errors.", "repo_context": "Use sendError() helper."}
+    tool.git_provider = SimpleNamespace(pr=None)
+    tool.ai_handler = SimpleNamespace(chat_completion=AsyncMock(return_value=("code_suggestions: []", "stop")))
+
+    await tool.self_reflect_on_suggestions([{"suggestion_content": "Wrap zod error"}], "diff", "gpt-4o-mini")
+
+    system = tool.ai_handler.chat_completion.await_args.kwargs["system"]
+    assert system.startswith(render_skills_prefix(skills_context="Never expose raw zod errors."))
+    assert system.count("Never expose raw zod errors.") == 1
+    assert "Repository context:\n======\nUse sendError() helper." in system
+    assert "Organizational standards:" in system
+
+
+@pytest.mark.parametrize("captured", [None, {}, {"skills_context": "", "repo_context": None}])
+async def test_reflection_without_skills_or_repo_context_omits_standards_guidance(captured):
+    tool = PRCodeSuggestions.__new__(PRCodeSuggestions)
+    if captured is not None:
+        tool.vars = captured
+    tool.git_provider = SimpleNamespace(pr=None)
+    tool.ai_handler = SimpleNamespace(chat_completion=AsyncMock(return_value=("unchanged", "stop")))
+
+    await tool.self_reflect_on_suggestions([{"suggestion_content": "check"}], "diff", "gpt-4o-mini")
+
+    system = tool.ai_handler.chat_completion.await_args.kwargs["system"]
+    assert system.startswith("You are an AI language model specialized in reviewing")
+    assert "Organizational standards" not in system
+    assert "Repository context:" not in system

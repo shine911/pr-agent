@@ -2478,6 +2478,8 @@ class PRCodeSuggestions:
                          'prev_suggestions_str': prev_suggestions_str,
                          'extra_instructions': getattr(self, 'vars', {}).get('extra_instructions') or '',
                          'artifact_context': (getattr(self, 'vars', {}) or {}).get('artifact_context') or None,
+                         'skills_context': (getattr(self, 'vars', {}) or {}).get('skills_context') or '',
+                         'repo_context': (getattr(self, 'vars', {}) or {}).get('repo_context') or '',
                          "is_ai_metadata": is_ai_metadata,
                          "diff_hunk_format": render_diff_hunk_format(
                              include_line_numbers=True,
