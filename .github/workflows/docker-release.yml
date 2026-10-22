@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # Đăng nhập vào GitHub Container Registry
       - name: Log in to GitHub Container Registry
@@ -35,7 +35,7 @@ jobs:
 
       # Build và Push (Đã loại bỏ hoàn toàn phần cache)
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./docker/Dockerfile
