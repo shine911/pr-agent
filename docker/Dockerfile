@@ -78,7 +78,6 @@ COPY pr_agent pr_agent
 COPY tests tests
 # Config the unit suite asserts against, copied file by file so an unrelated
 # workflow edit does not invalidate this layer.
-COPY .github/workflows/publish.yml .github/workflows/publish.yml
 COPY .github/workflows/build-and-test.yaml .github/workflows/build-and-test.yaml
 COPY docker/Dockerfile docker/Dockerfile
 COPY docker/Dockerfile.lambda docker/Dockerfile.lambda

@@ -14,7 +14,7 @@ through silently again.
 
 These tests assert the repository's CI configuration, not pr_agent logic, hence a
 file of their own. They read the checked-in workflow and Dockerfiles, which the
-`test` docker target copies into the image alongside publish.yml so the suite
+`test` docker target copies into the image so the suite
 carries the same signal in CI as it does locally. No network, no docker.
 """
 import re
