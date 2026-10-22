@@ -1286,7 +1286,7 @@ class GitProvider(ABC):
 
     def auto_unapprove(self) -> None:
         """Remove this bot's approval from the PR/MR when suggestions are found again."""
-        pass
+        return None
 
     def calc_pr_statistics(self, pull_request_data: dict):
         return {}

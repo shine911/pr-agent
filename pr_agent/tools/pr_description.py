@@ -103,7 +103,9 @@ class PRDescription:
             "description": self.git_provider.get_pr_description(full=False),
             "language": self.main_pr_language,
             "diff": "",  # empty diff for initial calculation
-            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_description.extra_instructions, self.git_provider),
+            "extra_instructions": get_repo_metadata_context_str(
+                get_settings().pr_description.extra_instructions, self.git_provider
+            ),
             "artifact_context": get_artifact_context("pr_description"),
             "skills_context": get_skills_context(),
             "repo_context": build_repo_context(self.git_provider),

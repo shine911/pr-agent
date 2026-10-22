@@ -225,11 +225,12 @@ class PRSimilarIssue:
                 cloud = get_settings().pinecone.cloud
                 region = get_settings().pinecone.region
             except Exception:
+                pinecone_config_msg = "Vui lòng thiết lập api key, cloud và region của pinecone trong secrets file"
                 if not self.cli_mode:
                     repo_name, original_issue_number = self.git_provider._parse_issue_url(self.issue_url.split('=')[-1])
                     issue_main = self.git_provider.repo_obj.get_issue(original_issue_number)
-                    issue_main.create_comment("Vui lòng thiết lập api key, cloud và region của pinecone trong secrets file")
-                raise Exception("Vui lòng thiết lập api key, cloud và region của pinecone trong secrets file") from None
+                    issue_main.create_comment(pinecone_config_msg)
+                raise Exception(pinecone_config_msg) from None
             self.pc = pinecone.Pinecone(api_key=api_key)
             self.pc_spec = ServerlessSpec(cloud=cloud, region=region)
             self.pinecone_index = None

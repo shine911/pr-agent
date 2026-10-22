@@ -829,7 +829,8 @@ def handle_configurations_errors(config_errors, git_provider):
                 # Parser/security diagnostics can contain private table names or values,
                 # even when the shared file body is omitted from the comment.
                 err_message = (
-                    "Cấu hình dùng chung không hợp lệ; hãy kiểm tra repository cấu hình và log của máy chủ để biết chi tiết."
+                    "Cấu hình dùng chung không hợp lệ; hãy kiểm tra repository cấu hình "
+                    "và log của máy chủ để biết chi tiết."
                     if config_type in {"global", "group"} else err['error']
                 )
                 header = f"❌ **PR-Agent không thể áp dụng cấu hình repo '{config_type}'**"

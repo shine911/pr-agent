@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 from gitlab.exceptions import GitlabGetError
 from gitlab.v4.objects import ProjectFile, ProjectWiki
+
 from pr_agent.git_providers import git_provider as _gp
 from pr_agent.git_providers.gitlab_provider import GitLabProvider
 

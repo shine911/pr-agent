@@ -299,8 +299,10 @@ def convert_to_markdown_v2(output_data: dict,
                                      artifact={"value": value})
                 continue
             if gfm_supported:
-                markdown_text += \
-                    f"<tr><td>{emoji}&nbsp;<strong>Ước tính thời gian đóng góp</strong> (tốt nhất, trung bình, xấu nhất): "
+                markdown_text += (
+                    f"<tr><td>{emoji}&nbsp;<strong>Ước tính thời gian đóng góp</strong> "
+                    "(tốt nhất, trung bình, xấu nhất): "
+                )
                 best = _expand_minute_suffix(value['best_case']).replace(' minutes', ' phút')
                 avg = _expand_minute_suffix(value['average_case']).replace(' minutes', ' phút')
                 worst = _expand_minute_suffix(value['worst_case']).replace(' minutes', ' phút')
@@ -1725,7 +1727,7 @@ def get_repo_metadata_context_str(extra_instructions: str = "", git_provider=Non
                 if file_content:
                     get_logger().info(f"Adding metadata for file {file_name} to context")
                     repo_metadata_str += f"\n\n--- Content from {file_name} ---\n{file_content}\n"
-        
+
         if repo_metadata_str:
             get_logger().info("Successfully retrieved repository metadata from context")
             return (extra_instructions or "") + "\n\nRepository Metadata Context:" + repo_metadata_str

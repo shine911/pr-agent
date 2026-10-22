@@ -117,7 +117,9 @@ class TestPRUpdateChangelog:
         assert isinstance(error.value.__cause__, FallbackEligibleError)
         assert [call.kwargs["model"] for call in mock_ai_handler.chat_completion.await_args_list] == [PRIMARY, BACKUP]
         mock_git_provider.create_or_update_pr_file.assert_not_called()
-        mock_git_provider.publish_comment.assert_called_once_with("Đang chuẩn bị cập nhật changelog...", is_temporary=True)
+        mock_git_provider.publish_comment.assert_called_once_with(
+            "Đang chuẩn bị cập nhật changelog...", is_temporary=True
+        )
         mock_git_provider.remove_initial_comment.assert_called_once_with()
 
     def test_get_changelog_file_with_existing_content(self, changelog_tool, mock_git_provider):

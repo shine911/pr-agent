@@ -305,7 +305,9 @@ class PRCodeSuggestions:
             "diff": "",  # empty diff for initial calculation
             "diff_no_line_numbers": "",  # empty diff for initial calculation
             "num_code_suggestions": num_code_suggestions,
-            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_code_suggestions.extra_instructions, self.git_provider),
+            "extra_instructions": get_repo_metadata_context_str(
+                get_settings().pr_code_suggestions.extra_instructions, self.git_provider
+            ),
             "artifact_context": get_artifact_context("pr_code_suggestions"),
             "skills_context": get_skills_context(),
             "repo_context": build_repo_context(self.git_provider),
@@ -495,7 +497,10 @@ class PRCodeSuggestions:
                             "[PR chat](https://chromewebstore.google.com/detail/ephlnjeghhogofkifjloamocljapahnl) \n\n"
                         )
                     if get_settings().pr_code_suggestions.enable_help_text:
-                        pr_body += "<hr>\n\n<details> <summary><strong>💡 Hướng dẫn sử dụng công cụ:</strong></summary><hr> \n\n"
+                        pr_body += (
+                            "<hr>\n\n<details> <summary><strong>💡 Hướng dẫn sử dụng công cụ:</strong>"
+                            "</summary><hr> \n\n"
+                        )
                         pr_body += HelpMessage.get_improve_usage_guide()
                         pr_body += "\n</details>\n"
 
@@ -2418,7 +2423,10 @@ class PRCodeSuggestions:
 {example_code.rstrip()}
 """
                     if suggestion.get('score_why'):
-                        pr_body += f"<details><summary>Mức độ quan trọng của đề xuất[1-10]: {suggestion['score']}</summary>\n\n"
+                        pr_body += (
+                            f"<details><summary>Mức độ quan trọng của đề xuất[1-10]: {suggestion['score']}"
+                            "</summary>\n\n"
+                        )
                         pr_body += f"__\n\nLý do: {suggestion['score_why']}\n\n"
                         pr_body += "</details>"
 

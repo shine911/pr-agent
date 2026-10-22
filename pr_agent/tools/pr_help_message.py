@@ -533,7 +533,10 @@ class PRHelpMessage:
             else:
                 supports_gfm_markdown = self.git_provider.is_supported("gfm_markdown")
                 if not supports_gfm_markdown and not self.git_provider.supports_markdown_tables():
-                    notice = "Công cụ `Help` yêu cầu gfm markdown, tính năng này không được nền tảng code của bạn hỗ trợ."
+                    notice = (
+                        "Công cụ `Help` yêu cầu gfm markdown, "
+                        "tính năng này không được nền tảng code của bạn hỗ trợ."
+                    )
                     if get_settings().config.publish_output:
                         self.git_provider.publish_comment(notice)
                     else:

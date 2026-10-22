@@ -274,7 +274,9 @@ class PRReviewer:
             'require_todo_scan': get_settings().pr_reviewer.get("require_todo_scan", False),
             'question_str': question_str,
             'answer_str': answer_str,
-            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_reviewer.extra_instructions, self.git_provider),
+            "extra_instructions": get_repo_metadata_context_str(
+                get_settings().pr_reviewer.extra_instructions, self.git_provider
+            ),
             "artifact_context": get_artifact_context("pr_reviewer"),
             "skills_context": get_skills_context(),
             "repo_context": build_repo_context(self.git_provider),
@@ -358,8 +360,10 @@ class PRReviewer:
                 if hasattr(self.git_provider, "previous_review") and self.git_provider.previous_review is not None:
                     previous_review_url = getattr(self.git_provider.previous_review, "html_url", "") or ""
                 if get_settings().config.publish_output:
-                    self.git_provider.publish_comment(f"Bỏ qua đánh giá gia tăng\n"
-                                    f"Không có file nào thay đổi kể từ [lần đánh giá PR trước đó]({previous_review_url})")
+                    self.git_provider.publish_comment(
+                        f"Bỏ qua đánh giá gia tăng\n"
+                        f"Không có file nào thay đổi kể từ [lần đánh giá PR trước đó]({previous_review_url})"
+                    )
                 return None
 
             # ticket extraction if exists

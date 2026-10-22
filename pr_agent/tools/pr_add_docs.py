@@ -41,7 +41,9 @@ class PRAddDocs:
             "description": self.git_provider.get_pr_description(),
             "language": self.main_language,
             "diff": "",  # empty diff for initial calculation
-            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_add_docs.extra_instructions, self.git_provider),
+            "extra_instructions": get_repo_metadata_context_str(
+                get_settings().pr_add_docs.extra_instructions, self.git_provider
+            ),
             "commit_messages_str": self.git_provider.get_commit_messages(),
             "diff_hunk_format": render_diff_hunk_format(
                 include_line_numbers=True,

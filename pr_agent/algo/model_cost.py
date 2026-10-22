@@ -11,8 +11,6 @@ The built-in values follow OpenAI's API list as of 2026-07-30 (GPT-5.6 Luna
 -80%, Terra -20%, Sol unchanged), short-context standard rates.
 """
 
-from typing import Optional
-
 from pr_agent.config_loader import get_settings
 
 # USD per 1M tokens: input, output, and cached-input (cache hit) rates.
@@ -23,7 +21,7 @@ DEFAULT_MODEL_PRICES = {
 }
 
 
-def _lookup(prices: dict, model: str) -> Optional[dict]:
+def _lookup(prices: dict, model: str) -> dict | None:
     """Exact match, then provider-prefixed match (``openai/...``, ``bedrock/...``)."""
     if model in prices:
         return prices[model]
@@ -32,7 +30,7 @@ def _lookup(prices: dict, model: str) -> Optional[dict]:
     return None
 
 
-def _litellm_prices(model: str) -> Optional[dict]:
+def _litellm_prices(model: str) -> dict | None:
     """Fall back to litellm's model registry for models it knows (e.g. gpt-4o)."""
     try:
         import litellm
@@ -51,7 +49,7 @@ def _litellm_prices(model: str) -> Optional[dict]:
     }
 
 
-def get_model_prices(model: Optional[str]) -> Optional[dict]:
+def get_model_prices(model: str | None) -> dict | None:
     """Return ``{input, output, cached_input}`` prices for a model, or None when unknown.
 
     Resolution order: settings ``[model_cost]`` -> built-in defaults (both with
@@ -71,8 +69,8 @@ def get_model_prices(model: Optional[str]) -> Optional[dict]:
 
 
 def compute_call_cost(
-    prompt_tokens: int, cached_tokens: int, completion_tokens: int, model: Optional[str]
-) -> Optional[float]:
+    prompt_tokens: int, cached_tokens: int, completion_tokens: int, model: str | None
+) -> float | None:
     """USD cost of one LLM call, or None when the model's price is unknown.
 
     Cached prompt tokens are billed at the cache-hit rate when the model has

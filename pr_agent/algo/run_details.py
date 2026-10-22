@@ -197,7 +197,7 @@ def _read_cache_token_field(usage, public_name: str, private_name: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
-def add_token_usage(usage, model: Optional[str] = None) -> None:
+def add_token_usage(usage, model: str | None = None) -> None:
     """Accumulate token counts from a litellm usage object or dict.
 
     ``model`` names the model behind this specific call; it prices the call's

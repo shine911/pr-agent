@@ -56,7 +56,9 @@ class PRGenerateLabels:
             "description": self.git_provider.get_pr_description(full=False),
             "language": self.main_pr_language,
             "diff": "",  # empty diff for initial calculation
-            "extra_instructions": get_repo_metadata_context_str(get_settings().pr_description.extra_instructions, self.git_provider),
+            "extra_instructions": get_repo_metadata_context_str(
+                get_settings().pr_description.extra_instructions, self.git_provider
+            ),
             "commit_messages_str": self.git_provider.get_commit_messages(),
             "enable_custom_labels": get_settings().config.enable_custom_labels,
             "custom_labels_class": "",  # will be filled if necessary in 'set_custom_labels' function

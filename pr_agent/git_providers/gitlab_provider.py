@@ -2409,7 +2409,9 @@ class GitLabProvider(GitProvider):
         get_logger().info("add_repo_metadata enabled: starting to fetch repository metadata (wiki-first)")
 
         # determine filenames to look for
-        files_list = get_settings().config.get("add_repo_metadata_file_list", ["AGENTS.MD", "QODO.MD", "CLAUDE.MD", "CONTEXT.MD", "README.MD"])
+        files_list = get_settings().config.get(
+            "add_repo_metadata_file_list", ["AGENTS.MD", "QODO.MD", "CLAUDE.MD", "CONTEXT.MD", "README.MD"]
+        )
 
         # Attempt to fetch from wiki pages first
         try:
