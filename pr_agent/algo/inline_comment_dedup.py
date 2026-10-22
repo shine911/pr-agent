@@ -12,8 +12,9 @@ present is skipped.
 Two fingerprints are computed per comment and matched with OR semantics:
 
 - Body fingerprint: SHA-256 over (relevant_file, anchor line, normalised
-  first 80 characters of the body). The category/importance tag and the
-  ``**Suggestion:**`` lead are stripped and whitespace is collapsed first.
+  body). The category/importance tag and the ``**Suggestion:**`` lead are
+  stripped and whitespace is collapsed first. The default compares the first
+  80 characters; providers may compare the complete body.
 - Code fingerprint: SHA-256 over (relevant_file, anchor line, normalised
   contents of the first ```suggestion fenced block). Returns None when the
   body has no suggestion block, in which case matching falls back to the
@@ -24,26 +25,38 @@ different prose" re-emissions of the same defect, which are the two ways an
 LLM tends to restate a finding across runs.
 
 The feature is opt-in via ``config.persistent_inline_comments`` (default
-false) and is wired into the GitHub and GitLab providers. The marker-scan
-store needs no external infrastructure; a different backend (database,
-cache) could populate the same load/seen/add interface.
+false) and is wired into the GitHub, GitLab, and Azure DevOps providers. The
+marker-scan store needs no external infrastructure; a different backend
+(database, cache) could populate the same load/seen/add interface.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
-from typing import Iterator, Optional
+from collections.abc import Iterator
 
-BODY_MARKER_RE = re.compile(r"<!-- pr-agent-dedup: ([a-f0-9]{12}) -->")
-CODE_MARKER_RE = re.compile(r"<!-- pr-agent-dedup-code: ([a-f0-9]{12}) -->")
-KEY_ISSUE_LOCATION_MARKER_RE = re.compile(r"<!-- pr-agent-key-issue-location: ([a-f0-9]{12}) -->")
+from pr_agent.algo.utils import iter_suggestion_blocks
+
+_MARKER_URL = r"https://github.com/The-PR-Agent/pr-agent"
+BODY_MARKER_RE = re.compile(
+    rf"<!-- pr-agent-dedup: ([a-f0-9]{{12}}) -->|\[pr-agent-dedup: "
+    rf"([a-f0-9]{{12}})\]: {_MARKER_URL}"
+)
+CODE_MARKER_RE = re.compile(
+    rf"<!-- pr-agent-dedup-code: ([a-f0-9]{{12}}) -->|\[pr-agent-dedup-code: "
+    rf"([a-f0-9]{{12}})\]: {_MARKER_URL}"
+)
+KEY_ISSUE_LOCATION_MARKER_RE = re.compile(
+    rf"<!-- pr-agent-key-issue-location: ([a-f0-9]{{12}}) -->|"
+    rf"\[pr-agent-key-issue-location: ([a-f0-9]{{12}})\]: {_MARKER_URL}"
+)
 _MARKER_RES = (BODY_MARKER_RE, CODE_MARKER_RE, KEY_ISSUE_LOCATION_MARKER_RE)
 
 _LEAD_RE = re.compile(r"^\*\*Suggestion:\*\*\s*", re.IGNORECASE)
 _TAG_RE = re.compile(r"\[[^\]]+?,\s*importance:\s*\d+\]", re.IGNORECASE)
 _WS_RE = re.compile(r"\s+")
-_CODE_BLOCK_RE = re.compile(r"```suggestion[^\n]*\n(.*?)```", re.DOTALL)
+_DIFF_BLOCK_RE = re.compile(r"```diff[^\n]*\n(.*?)```", re.DOTALL)
 
 
 def has_marker(body: str) -> bool:
@@ -52,20 +65,50 @@ def has_marker(body: str) -> bool:
     return bool(BODY_MARKER_RE.search(body or "") or CODE_MARKER_RE.search(body or ""))
 
 
+def is_agent_inline_comment(body: str) -> bool:
+    body = (body or "").lstrip()
+    return has_marker(body) or bool(_LEAD_RE.match(body))
+
+
+def marker_fingerprints(body: str) -> set:
+    """All dedup-marker fingerprints embedded in one comment body."""
+    found = set()
+    for marker_re in _MARKER_RES:
+        for match in marker_re.finditer(body or ""):
+            found.update(group for group in match.groups() if group)
+    return found
+
+
 def _strip_markers(body: str) -> str:
     """Remove embedded dedup markers so a pre-marked body fingerprints the
     same as its original (markers are appended after marking)."""
     body = BODY_MARKER_RE.sub("", body or "")
     body = CODE_MARKER_RE.sub("", body)
+    body = KEY_ISSUE_LOCATION_MARKER_RE.sub("", body)
     return body
 
 
-def body_fingerprint(relevant_file: str, target_line_no, body: str) -> str:
+def strip_markers(body: str) -> str:
+    """Remove well-formed dedup markers from a comment body, keeping any text that merely quotes them."""
+    return _strip_markers(body)
+
+
+def _body_fingerprint(relevant_file: str, target_line_no, body: str, max_chars: int | None) -> str:
     normalised = _LEAD_RE.sub("", _strip_markers(body))
     normalised = _TAG_RE.sub("", normalised)
-    normalised = _WS_RE.sub(" ", normalised).strip()[:80].lower()
+    normalised = _WS_RE.sub(" ", normalised).strip().lower()
+    if max_chars is not None:
+        normalised = normalised[:max_chars]
     key = f"{relevant_file}|{target_line_no}|{normalised}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+
+
+def body_fingerprint(relevant_file: str, target_line_no, body: str) -> str:
+    return _body_fingerprint(relevant_file, target_line_no, body, 80)
+
+
+def full_body_fingerprint(relevant_file: str, target_line_no, body: str) -> str:
+    return _body_fingerprint(relevant_file, target_line_no, body, None)
 
 
 def key_issue_fingerprint(relevant_file: str, body: str) -> str:
@@ -78,63 +121,96 @@ def key_issue_location_fingerprint(fingerprint: str, start_line: int, end_line: 
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
 
 
-def code_fingerprint(relevant_file: str, target_line_no, body: str) -> Optional[str]:
-    m = _CODE_BLOCK_RE.search(_strip_markers(body))
-    if not m:
+def code_fingerprint(relevant_file: str, target_line_no, body: str) -> str | None:
+    code = extract_suggestion_code(body)
+    if not code:
         return None
     # Do not lower-case: code is case-sensitive, so case-only differences
     # must produce distinct fingerprints.
-    code = _WS_RE.sub(" ", m.group(1)).strip()
+    code = _WS_RE.sub(" ", code).strip()
     if not code:
         return None
     key = f"{relevant_file}|{target_line_no}|code|{code}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
 
 
-def build_markers(body_fp: str, code_fp: Optional[str]) -> str:
-    markers = [f"<!-- pr-agent-dedup: {body_fp} -->"]
+def extract_suggestion_code(body: str) -> str | None:
+    body = _strip_markers(body)
+    block = next(iter_suggestion_blocks(body), None)
+    if block is not None and block[2] is not None:
+        return block[2].strip("\n")
+    diff_match = _DIFF_BLOCK_RE.search(body)
+    if diff_match:
+        return _reconstruct_improved_code(diff_match.group(1))
+    return None
+
+
+def _reconstruct_improved_code(diff_text: str) -> str | None:
+    """Rebuild the post-change code from a unified diff inside a ```diff fence.
+
+    Context and added lines drop their leading space or ``+`` prefix and removed
+    lines are dropped, mirroring how Azure DevOps renders a suggestion as a diff
+    block."""
+    lines = []
+    for line in diff_text.splitlines():
+        if line.startswith((" ", "+")):
+            lines.append(line[1:])
+        elif line.startswith("-"):
+            continue
+    if not lines:
+        return None
+    return "\n".join(lines).strip("\n")
+
+
+def _render_marker(prefix: str, fingerprint: str, git_provider=None) -> str:
+    supports_html = getattr(git_provider, "supports_html_comment_markers", lambda: True)
+    if supports_html() is False:
+        return f"[{prefix}: {fingerprint}]: https://github.com/The-PR-Agent/pr-agent"
+    return f"<!-- {prefix}: {fingerprint} -->"
+
+
+def build_markers(body_fp: str, code_fp: str | None, git_provider=None) -> str:
+    markers = [_render_marker("pr-agent-dedup", body_fp, git_provider)]
     if code_fp is not None:
-        markers.append(f"<!-- pr-agent-dedup-code: {code_fp} -->")
+        markers.append(_render_marker("pr-agent-dedup-code", code_fp, git_provider))
     return "\n".join(markers)
 
 
-def _append_markers(body: str, markers: str, max_chars: Optional[int]) -> str:
+def _append_markers(body: str, markers: str, max_chars: int | None) -> str:
     suffix = f"\n\n{markers}"
     if max_chars and len(body) + len(suffix) > max_chars:
         body = body[: max(0, max_chars - len(suffix))]
     return f"{body}{suffix}"
 
 
-def body_with_markers(body: str, body_fp: str, code_fp: "Optional[str]",
-                      max_chars: "Optional[int]" = None) -> str:
+def body_with_markers(body: str, body_fp: str, code_fp: str | None,
+                      max_chars: int | None = None, git_provider=None) -> str:
     """Append the dedup marker(s) to a comment body. If max_chars is given and
     body + markers would exceed it, the body is clipped (never the markers) so
     the fingerprint marker always survives for the next run's scan."""
-    return _append_markers(body, build_markers(body_fp, code_fp), max_chars)
+    return _append_markers(body, build_markers(body_fp, code_fp, git_provider), max_chars)
 
 
 def key_issue_body_with_markers(body: str, body_fp: str, location_fp: str,
-                                max_chars: Optional[int] = None) -> str:
-    markers = (f"{build_markers(body_fp, None)}\n"
-               f"<!-- pr-agent-key-issue-location: {location_fp} -->")
+                                max_chars: int | None = None, git_provider=None) -> str:
+    markers = (f"{build_markers(body_fp, None, git_provider)}\n"
+               f"{_render_marker('pr-agent-key-issue-location', location_fp, git_provider)}")
     return _append_markers(body, markers, max_chars)
-
-
-def inline_comment_line(comment: dict):
-    """Best-effort anchor line for a GitHub inline-comment dict."""
-    for key in ("line", "position", "start_line"):
-        if comment.get(key) is not None:
-            return comment[key]
-    return None
 
 
 def iter_existing_inline_comment_bodies(git_provider) -> Iterator[str]:
     """Yield the body of every existing comment on the current PR/MR.
 
-    Dispatch is by provider class name so this module needs no provider
-    import. Unsupported providers raise NotImplementedError, which the store
-    treats as "cannot dedup here" and degrades to within-run dedup only.
+    Providers with a persistent comment-body capability are handled through
+    that interface. The remaining legacy providers use their provider-specific
+    APIs; unsupported providers raise NotImplementedError so the store can
+    degrade to within-run dedup only.
     """
+    persistent_bodies = getattr(git_provider, "get_persistent_comment_bodies", None)
+    if callable(persistent_bodies):
+        yield from persistent_bodies()
+        return
+
     provider_name = type(git_provider).__name__
     if provider_name == "GithubProvider":
         for comment in git_provider.pr.get_comments():
@@ -150,8 +226,15 @@ def iter_existing_inline_comment_bodies(git_provider) -> Iterator[str]:
         # are seen on later runs.
         for note in git_provider.mr.notes.list(get_all=True):
             yield getattr(note, "body", "") or ""
+        # gitlab.publish_code_suggestions_as_review queues suggestions as draft notes
+        # (invisible in the discussions/notes listings above until published). Scan
+        # them too, so a marker from a draft that's still pending - e.g. because a
+        # prior run's bulk-publish failed - is still seen, instead of being re-posted
+        # as a duplicate once it (or a fresh copy) is eventually published.
+        for draft in git_provider.mr.draft_notes.list(get_all=True):
+            yield getattr(draft, "note", "") or ""
     elif provider_name == "AzureDevopsProvider":
-        yield from git_provider.get_inline_comment_bodies()
+        yield from git_provider.get_persistent_comment_bodies()
     else:
         raise NotImplementedError(
             f"inline-comment dedup not implemented for {provider_name}"
@@ -159,7 +242,7 @@ def iter_existing_inline_comment_bodies(git_provider) -> Iterator[str]:
 
 
 def can_verify_inline_comment_publication(git_provider) -> bool:
-    return (callable(getattr(git_provider, "get_inline_comment_bodies", None)) and
+    return (callable(getattr(git_provider, "get_persistent_comment_bodies", None)) and
             callable(getattr(git_provider, "get_recent_inline_comment_bodies", None)))
 
 
@@ -175,6 +258,7 @@ class InlineCommentStore:
     def __init__(self, git_provider):
         self._git_provider = git_provider
         self._keys: set = set()
+        self._released: set = set()
         self._loaded = False
         self._load_failed = False
 
@@ -184,6 +268,12 @@ class InlineCommentStore:
         try:
             for body in iter_existing_inline_comment_bodies(self._git_provider):
                 self.add_body(body)
+            fingerprints = getattr(
+                self._git_provider, "get_existing_inline_comment_fingerprints", None
+            )
+            if callable(fingerprints):
+                for fingerprint in fingerprints():
+                    self.add(fingerprint)
         except Exception as e:
             self._load_failed = True
             from pr_agent.log import get_logger
@@ -191,6 +281,7 @@ class InlineCommentStore:
                 f"Persistent inline comments: could not load existing comments, "
                 f"within-run dedup only. error={e}"
             )
+        self._keys -= self._released
         self._loaded = True
         return self._keys
 
@@ -198,19 +289,25 @@ class InlineCommentStore:
     def load_failed(self) -> bool:
         return self._load_failed
 
-    def seen(self, fingerprint: Optional[str]) -> bool:
+    def seen(self, fingerprint: str | None) -> bool:
         if fingerprint is None:
             return False
         return fingerprint in self.load()
 
-    def add(self, fingerprint: Optional[str]) -> None:
+    def add(self, fingerprint: str | None) -> None:
         if fingerprint is not None:
             self._keys.add(fingerprint)
 
     def add_body(self, body: str) -> None:
-        for marker_re in _MARKER_RES:
-            for match in marker_re.finditer(body or ""):
-                self._keys.add(match.group(1))
+        self._keys |= marker_fingerprints(body)
+
+    def release(self, fingerprints) -> None:
+        """Forget fingerprints whose threads the outdated-thread sweep resolved, so they
+        stop suppressing their own replacements. Applied to what is already loaded and
+        again after any later load, since the sweep and the load can run in either order.
+        Human-resolved threads never reach here and stay suppressive."""
+        self._released |= set(fingerprints)
+        self._keys -= self._released
 
 
 def get_inline_comment_store(git_provider) -> InlineCommentStore:

@@ -1,11 +1,17 @@
 import asyncio
+from decimal import Decimal
 
 import pytest
 
-from pr_agent.algo.run_details import (RunDetails, add_token_usage,
-                                       get_run_details, init_run_details,
-                                       log_run_summary, record_ai_call,
-                                       record_model_used)
+from pr_agent.algo.run_details import (
+    RunDetails,
+    add_token_usage,
+    get_run_details,
+    init_run_details,
+    log_run_summary,
+    record_ai_call,
+    record_model_used,
+)
 
 
 class _Usage:
@@ -29,7 +35,12 @@ def test_init_returns_fresh_instance_with_zeroed_counters():
     assert details.cached_prompt_tokens == 0
     assert details.cost_usd == 0
     assert details.num_ai_calls == 0
+    assert details.total_cost_usd == Decimal(0)
+    assert details.known_cost_call_count == 0
+    assert details.model_costs_usd == {}
+    assert details.cost_status == "unavailable"
     assert details.has_token_usage is False
+    assert details.has_cache_usage is False
     assert details.duration_seconds >= 0
 
 
@@ -101,6 +112,95 @@ def test_add_token_usage_ignores_none_and_partial_objects():
     assert details.has_token_usage is False
 
 
+def test_add_token_usage_accumulates_cache_tokens_from_dict():
+    init_run_details()
+
+    add_token_usage({
+        "prompt_tokens": 100,
+        "completion_tokens": 10,
+        "cache_read_input_tokens": 40,
+        "cache_creation_input_tokens": 60,
+    })
+
+    details = get_run_details()
+    assert details.cache_read_tokens == 40
+    assert details.cache_creation_tokens == 60
+    assert details.has_cache_usage is True
+
+
+def test_add_token_usage_reads_cache_tokens_from_usage_private_attrs():
+    class _CachedUsage:
+        def __init__(self):
+            self.prompt_tokens = 100
+            self.completion_tokens = 10
+            self.total_tokens = 110
+            self._cache_read_input_tokens = 40
+            self._cache_creation_input_tokens = 60
+
+    init_run_details()
+    add_token_usage(_CachedUsage())
+
+    details = get_run_details()
+    assert details.cache_read_tokens == 40
+    assert details.cache_creation_tokens == 60
+    assert details.has_cache_usage is True
+
+
+def test_add_token_usage_reads_cache_read_via_prompt_tokens_details():
+    class _CachedUsage:
+        prompt_tokens = 100
+        completion_tokens = 10
+        total_tokens = 110
+        prompt_tokens_details = type("Details", (), {"cached_tokens": 40})()
+
+    init_run_details()
+    add_token_usage(_CachedUsage())
+
+    assert get_run_details().cache_read_tokens == 40
+    assert get_run_details().cache_creation_tokens == 0
+
+
+def test_add_token_usage_ignores_bool_like_cache_values():
+    init_run_details()
+
+    add_token_usage({"cache_read_input_tokens": True, "cache_creation_input_tokens": 0})
+
+    details = get_run_details()
+    assert details.has_cache_usage is False
+
+
+def test_add_token_usage_tolerates_null_prompt_tokens_details():
+    # Raw OpenAI payloads can carry prompt_tokens_details: null; the cache lookup must not
+    # chain attribute access off it after a completion already succeeded.
+    init_run_details()
+
+    add_token_usage({
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "prompt_tokens_details": None,
+    })
+
+    assert get_run_details().cache_read_tokens == 0
+
+
+def test_add_token_usage_reads_deepseek_cache_hits_as_cache_reads():
+    init_run_details()
+
+    add_token_usage({"prompt_tokens": 7, "prompt_cache_hit_tokens": 3})
+
+    assert get_run_details().cache_read_tokens == 3
+
+    class _DeepSeekUsage:
+        prompt_tokens = 7
+        completion_tokens = 1
+        prompt_cache_hit_tokens = 5
+
+    init_run_details()
+    add_token_usage(_DeepSeekUsage())
+
+    assert get_run_details().cache_read_tokens == 5
+
+
 def test_record_ai_call_counts_calls_even_without_usage():
     init_run_details()
 
@@ -110,6 +210,61 @@ def test_record_ai_call_counts_calls_even_without_usage():
     details = get_run_details()
     assert details.num_ai_calls == 2
     assert details.total_tokens == 12
+
+
+def test_record_ai_call_aggregates_decimal_costs_by_model():
+    init_run_details()
+    record_model_used("model-b", is_fallback=True)
+
+    record_ai_call(_Usage(10, 2, 12), model="model-a", cost_usd=Decimal("0.0710"))
+    record_ai_call(_Usage(5, 1, 6), model="model-b", cost_usd="0.0132")
+    record_ai_call(_Usage(1, 1, 2), model="model-a", cost_usd=0.00001)
+
+    details = get_run_details()
+    assert details.total_cost_usd == Decimal("0.08421")
+    assert details.known_cost_call_count == 3
+    assert details.cost_status == "complete"
+    assert details.fallback_used is True
+    assert details.model_costs_usd == {
+        "model-a": Decimal("0.07101"),
+        "model-b": Decimal("0.0132"),
+    }
+
+
+def test_record_ai_call_treats_zero_cost_as_unpriced():
+    """litellm.completion_cost returns 0.0 for unpriced models and empty usage;
+    recording it would render a false '$0.00' with cost status complete."""
+    init_run_details()
+
+    record_ai_call(_Usage(10, 2, 12), model="zero-priced", cost_usd=0.0)
+    record_ai_call(_Usage(10, 2, 12), model="zero-priced", cost_usd=Decimal(0))
+
+    details = get_run_details()
+    assert details.total_cost_usd == Decimal(0)
+    assert details.known_cost_call_count == 0
+    assert details.cost_status == "unavailable"
+    assert details.model_costs_usd == {}
+
+
+def test_record_ai_call_marks_partial_and_unavailable_cost_without_fabricating_zero():
+    init_run_details()
+
+    record_ai_call(_Usage(10, 2, 12), model="known", cost_usd=Decimal("0.0042"))
+    record_ai_call(None, model="unknown", cost_usd=None)
+
+    details = get_run_details()
+    assert details.total_cost_usd == Decimal("0.0042")
+    assert details.known_cost_call_count == 1
+    assert details.cost_status == "partial"
+
+    init_run_details()
+    record_ai_call(None, model="unknown", cost_usd=None)
+
+    details = get_run_details()
+    assert details.total_cost_usd == Decimal(0)
+    assert details.known_cost_call_count == 0
+    assert details.cost_status == "unavailable"
+    assert details.model_costs_usd == {}
 
 
 @pytest.mark.asyncio

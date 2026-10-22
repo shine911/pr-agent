@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
+from gitlab.exceptions import GitlabGetError
 from gitlab.v4.objects import ProjectFile, ProjectWiki
 from pr_agent.git_providers import git_provider as _gp
 from pr_agent.git_providers.gitlab_provider import GitLabProvider
@@ -46,6 +47,7 @@ class TestGitLabWikiSettings:
     def test_get_repo_settings_from_main_repo(self, gitlab_provider, mock_project):
         mock_file = MagicMock(ProjectFile)
         mock_file.decode.return_value = 'key = "value_main"'
+        mock_file.commit_id = "a" * 40
         mock_project.files.get.return_value = mock_file
 
         settings = gitlab_provider.get_repo_settings()
@@ -55,7 +57,7 @@ class TestGitLabWikiSettings:
 
     def test_get_repo_settings_from_wiki(self, gitlab_provider, mock_project):
         # 1. Main repo file not found
-        mock_project.files.get.side_effect = Exception("404")
+        mock_project.files.get.side_effect = GitlabGetError(response_code=404)
 
         # 2. Mock wiki page (reset the default side_effect that raises)
         mock_wiki_page = MagicMock(ProjectWiki)
@@ -69,7 +71,7 @@ class TestGitLabWikiSettings:
         mock_project.wikis.get.assert_any_call('.pr_agent.toml')
 
     def test_get_repo_settings_from_wiki_with_markdown(self, gitlab_provider, mock_project):
-        mock_project.files.get.side_effect = Exception("404")
+        mock_project.files.get.side_effect = GitlabGetError(response_code=404)
 
         mock_wiki_page = MagicMock(ProjectWiki)
         mock_wiki_page.content = "Some description\n\n```toml\nkey = \"value_wiki_md\"\n```\nMore text"
@@ -83,7 +85,7 @@ class TestGitLabWikiSettings:
     def test_get_repo_settings_wiki_ignores_disable_flag(self, gitlab_provider, mock_project, mock_gitlab_client):
         # The wiki fetch has no opt-out flag anymore: use_wiki_settings_file=false
         # does not stop the load (failures fall back to the local repo file).
-        mock_project.files.get.side_effect = Exception("404")
+        mock_project.files.get.side_effect = GitlabGetError(response_code=404)
 
         mock_wiki_page = MagicMock(ProjectWiki)
         mock_wiki_page.content = 'key = "value_wiki"'
@@ -108,4 +110,4 @@ class TestGitLabWikiSettings:
             assert settings == [("wiki", 'key = "value_wiki"')]
             mock_project.wikis.get.assert_any_call('.pr_agent.toml')
             # Verify GitLab project lookup received "test/repo"
-            mock_gitlab_client.projects.get.assert_any_call("test/repo")
+            mock_gitlab_client.projects.get.assert_any_call("test/repo", lazy=True)

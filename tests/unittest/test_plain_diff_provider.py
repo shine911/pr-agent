@@ -1,13 +1,18 @@
+import io
+import sys
+
 import pytest
+from git import Repo
 
 from pr_agent.algo.types import EDIT_TYPE
 from pr_agent.config_loader import get_settings
 from pr_agent.git_providers import _GIT_PROVIDERS
 from pr_agent.git_providers.plain_diff_provider import PlainDiffGitProvider
+from pr_agent.tools.pr_code_suggestions import PRCodeSuggestions
 
 # Diff-mode settings keys these tests mutate on the process-wide singleton.
 _SETTINGS_KEYS = ["plain_diff.content", "plain_diff.output_path",
-                  "config.git_provider", "config.publish_output"]
+                  "config.git_provider", "config.publish_output", "ignore.glob", "ignore.regex"]
 
 
 @pytest.fixture(autouse=True)
@@ -64,6 +69,30 @@ def test_get_diff_files(cfg):
     assert files[0].edit_type == EDIT_TYPE.MODIFIED
 
 
+@pytest.mark.parametrize("quote_path", ["true", "false"])
+@pytest.mark.parametrize("filename", ["测试.py", 'quote"name.py', "tab\tname.py", "back\\slash.py"])
+def test_git_quoted_paths_preserve_working_tree_context(cfg, tmp_path, monkeypatch, filename, quote_path):
+    repo = Repo.init(tmp_path)
+    path = tmp_path / filename
+    path.write_text("before\n", encoding="utf-8")
+    repo.index.add([filename])
+    path.write_text("after\n", encoding="utf-8")
+    diff = repo.git.execute([
+        "git", "-c", f"core.quotePath={quote_path}", "diff", "--no-ext-diff", "--no-textconv", "--", filename,
+    ])
+    monkeypatch.chdir(tmp_path)
+    cfg("plain_diff.content", diff)
+    cfg("plain_diff.output_path", None)
+
+    provider = PlainDiffGitProvider(None)
+    file = provider.get_diff_files()[0]
+
+    assert provider.get_files() == [filename]
+    assert file.head_file == "after\n"
+    assert file.base_file == "before\n"
+    assert provider.get_languages() == {"Python": 100.0}
+
+
 _MULTI_LANG_DIFF = """diff --git a/foo.py b/foo.py
 --- a/foo.py
 +++ b/foo.py
@@ -85,6 +114,32 @@ diff --git a/weird.zzz b/weird.zzz
 """
 
 
+def test_plain_diff_applies_ignore_rules_to_files_and_patches(cfg, monkeypatch):
+    cfg("plain_diff.content", _MULTI_LANG_DIFF)
+    cfg("ignore.glob", ["foo.py"])
+    cfg("ignore.regex", [])
+    monkeypatch.setattr("pr_agent.git_providers.plain_diff_provider._find_repository_root", lambda: None)
+
+    provider = PlainDiffGitProvider(None)
+    assert provider.get_files() == ["app.js", "weird.zzz"]
+    assert [file.filename for file in provider.get_diff_files()] == ["app.js", "weird.zzz"]
+
+
+_FILENAME_MATCHING_DIFF = """diff --git a/upper.C b/upper.C
+--- a/upper.C
++++ b/upper.C
+@@ -1 +1,2 @@
+ a
++b
+diff --git a/Dockerfile b/Dockerfile
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1 +1,2 @@
+ x
++y
+"""
+
+
 def test_get_languages_returns_language_names(cfg):
     # get_languages() must key on language NAMES (e.g. "Python"), not raw
     # extensions ("py"): sort_files_by_main_languages() maps names back to
@@ -103,6 +158,14 @@ def test_get_languages_returns_language_names(cfg):
     assert buckets["Python"] == {"foo.py"}
     assert buckets["JavaScript"] == {"app.js"}
     assert buckets["Other"] == {"weird.zzz"}  # unknown extension falls through
+
+
+def test_get_languages_matches_case_sensitive_and_full_filenames(cfg):
+    cfg("plain_diff.content", _FILENAME_MATCHING_DIFF)
+    cfg("plain_diff.output_path", None)
+    provider = PlainDiffGitProvider(None)
+
+    assert provider.get_languages() == {"C++": 50.0, "Dockerfile": 50.0}
 
 
 def test_get_diff_files_patch_is_hunk_only(cfg):
@@ -135,6 +198,20 @@ def test_publish_comment_to_file(cfg, tmp_path):
     assert "saved" in out.read_text(encoding="utf-8")
 
 
+def test_publish_comment_survives_stdout_that_cannot_encode(cfg, tmp_path, monkeypatch):
+    # Simulate a redirected Windows stdout (cp1252) and check that emoji in tool
+    # output neither abort publishing nor skip the --output file.
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252"))
+    out = tmp_path / "review.md"
+    cfg("plain_diff.content", DIFF)
+    cfg("plain_diff.output_path", str(out))
+    provider = PlainDiffGitProvider(None)
+    provider.publish_comment("## ✨ Review\nlooks good")
+    assert raw.getvalue().decode("utf-8") == "## ✨ Review\nlooks good\n"
+    assert out.read_text(encoding="utf-8") == "## ✨ Review\nlooks good"
+
+
 def test_empty_diff_raises(cfg):
     cfg("plain_diff.content", "")
     cfg("plain_diff.output_path", None)
@@ -149,13 +226,6 @@ def test_temporary_comment_not_emitted(cfg, capsys):
     provider.publish_comment("Preparing review...", is_temporary=True)
     captured = capsys.readouterr()
     assert "Preparing review" not in captured.out
-
-
-def test_publish_file_comments_not_supported(cfg):
-    cfg("plain_diff.content", DIFF)
-    cfg("plain_diff.output_path", None)
-    provider = PlainDiffGitProvider(None)
-    assert provider.is_supported("publish_file_comments") is False
 
 
 def test_path_traversal_file_not_read(cfg, tmp_path, monkeypatch):
@@ -242,9 +312,11 @@ def test_publish_code_suggestions_renders_to_stdout(cfg, capsys):
     # render the suggestions to stdout.
     assert provider.publish_code_suggestions(suggestions) is True
     out = capsys.readouterr().out
-    assert "Code suggestions" in out
-    assert "foo.py:2-2" in out
-    assert "use a constant" in out
+    assert out == (
+        "## Code suggestions\n\n"
+        "### foo.py:2-2\n"
+        "**Suggestion:** use a constant\n\n"
+    )
 
 
 def test_publish_code_suggestions_empty_is_noop(cfg, capsys):
@@ -253,6 +325,61 @@ def test_publish_code_suggestions_empty_is_noop(cfg, capsys):
     provider = PlainDiffGitProvider(None)
     assert provider.publish_code_suggestions([]) is True
     assert capsys.readouterr().out.strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_partial_improve_keeps_suggestions_and_coverage_in_one_output(cfg, capsys, tmp_path):
+    output = tmp_path / "suggestions.md"
+    cfg("plain_diff.content", DIFF)
+    cfg("plain_diff.output_path", str(output))
+    provider = PlainDiffGitProvider(None)
+    assert provider.supports_code_suggestions_artifact() is True
+    tool = object.__new__(PRCodeSuggestions)
+    tool.git_provider = provider
+    tool.failed_chunk_count = 1
+    tool.total_chunk_count = 2
+    tool.progress_response = None
+    tool._output_published = False
+    tool._validate_suggestion = lambda *args: (True, "", True)
+
+    await tool.push_inline_code_suggestions({"code_suggestions": [{
+        "relevant_file": "foo.py",
+        "relevant_lines_start": 2,
+        "relevant_lines_end": 2,
+        "suggestion_content": "Use a constant",
+        "improved_code": "",
+        "existing_code": "line2-changed",
+        "label": "maintainability",
+        "score": 8,
+    }]})
+
+    content = output.read_text(encoding="utf-8")
+    stdout = capsys.readouterr().out
+    for rendered in (content, stdout):
+        assert rendered.count("Use a constant") == 1
+        assert rendered.count("foo.py:2-2") == 1
+        assert rendered.count("1 of 2 analysis chunks failed") == 1
+        assert rendered.index("Use a constant") < rendered.index("1 of 2 analysis chunks failed")
+
+
+@pytest.mark.asyncio
+async def test_partial_improve_without_suggestions_keeps_coverage_in_artifact(cfg, capsys, tmp_path):
+    output = tmp_path / "suggestions.md"
+    cfg("plain_diff.content", DIFF)
+    cfg("plain_diff.output_path", str(output))
+    provider = PlainDiffGitProvider(None)
+    tool = object.__new__(PRCodeSuggestions)
+    tool.git_provider = provider
+    tool.failed_chunk_count = 1
+    tool.total_chunk_count = 2
+
+    await tool.publish_no_suggestions()
+
+    content = output.read_text(encoding="utf-8")
+    stdout = capsys.readouterr().out
+    for rendered in (content, stdout):
+        assert rendered.count("Không tìm thấy đề xuất code nào trong các chunk đã phân tích thành công.") == 1
+        assert rendered.count("1 of 2 analysis chunks failed") == 1
 
 
 def test_incremental_review_disabled(cfg):

@@ -1,3 +1,7 @@
+import copy
+
+import pytest
+
 from pr_agent.config_loader import get_settings
 from pr_agent.git_providers import utils
 from pr_agent.git_providers.utils import apply_repo_settings, handle_configurations_errors
@@ -90,7 +94,7 @@ def test_apply_repo_settings_attributes_global_error_and_still_applies_local(mon
         assert settings.pr_reviewer.extra_instructions == "local-applied"
         # One error comment, attributed to global, with the global content redacted (not echoed).
         assert len(provider.comments) == 1
-        assert "repository cấu hình toàn cục `pr-agent-settings`" in provider.comments[0]
+        assert "repository cấu hình global (`config.global_settings_repo`)" in provider.comments[0]
         assert "unclosed_section" not in provider.comments[0]
     finally:
         settings.pr_reviewer.extra_instructions = original_extra_instructions
@@ -112,6 +116,8 @@ def test_handle_configurations_errors_uses_persistent_comment_when_supported():
     assert comment["final_update_message"] is False
     assert "PR-Agent không thể áp dụng cấu hình repo 'local'" in comment["body"]
     assert "Invalid value" in comment["body"]
+    assert "https://docs.pr-agent.ai/usage-guide/configuration_options/" in comment["body"]
+    assert "qodo-merge-docs.qodo.ai" not in comment["body"]
     assert "```toml\n[config]\nmodel =\n```" in comment["body"]
     assert "<details><summary>Nội dung cấu hình:</summary>" in comment["body"]
 
@@ -175,8 +181,9 @@ def test_handle_configurations_errors_publishes_each_error():
     assert len(provider.comments) == 2
     assert "First error" in provider.comments[0]
     assert "[config]\nmodel =" in provider.comments[0]
-    assert "Second error" in provider.comments[1]
-    assert "repository cấu hình toàn cục `pr-agent-settings`" in provider.comments[1]
+    assert "Second error" not in provider.comments[1]
+    assert "Cấu hình dùng chung không hợp lệ" in provider.comments[1]
+    assert "repository cấu hình global (`config.global_settings_repo`)" in provider.comments[1]
     assert "dummy-value" not in provider.comments[1]
     assert "num_max_findings" not in provider.comments[1]
 
@@ -300,3 +307,118 @@ def test_get_cached_global_settings_does_not_cache_fetch_errors():
         assert "k3" not in gp._GLOBAL_SETTINGS_CACHE
     finally:
         gp._GLOBAL_SETTINGS_CACHE.clear()
+
+
+@pytest.mark.parametrize("category", ["global", "group"])
+def test_shared_settings_parse_error_redacts_private_table_names(monkeypatch, category):
+    settings = get_settings()
+    original_config = copy.deepcopy(settings.as_dict()["PR_REVIEWER"])
+    provider = FakeErrorReportingProvider([
+        (category, b"[private_customer_name]\n[private_customer_name]\n"),
+        ("local", b'[pr_reviewer]\nextra_instructions = "local-applied"\n'),
+    ])
+    monkeypatch.setattr(utils, "get_git_provider_with_context", lambda pr_url: provider)
+    monkeypatch.delenv("AUTO_CAST_FOR_DYNACONF", raising=False)
+    try:
+        apply_repo_settings("https://gitlab.example.com/org/team/service/-/merge_requests/1")
+        assert settings.pr_reviewer.extra_instructions == "local-applied"
+        assert len(provider.comments) == 1
+        assert f"repository cấu hình {category}" in provider.comments[0]
+        assert "Cấu hình dùng chung không hợp lệ" in provider.comments[0]
+        assert "private_customer_name" not in provider.comments[0]
+        assert "Cannot declare" not in provider.comments[0]
+    finally:
+        settings.unset("pr_reviewer")
+        settings.set("pr_reviewer", original_config, merge=False)
+
+
+@pytest.mark.parametrize("category", ["global", "group"])
+@pytest.mark.parametrize("provider_cls", [FakeMarkdownProvider, FakePlainProvider, FakeMarkdownCommentProvider])
+def test_shared_settings_error_redacts_content_and_diagnostics(provider_cls, category):
+    provider = provider_cls()
+    handle_configurations_errors([{
+        "settings": b'[config]\nmodel = "private-shared-value"\n',
+        "error": "Cannot declare private_table twice",
+        "category": category,
+    }], provider)
+    if isinstance(provider, FakeMarkdownProvider):
+        comment = provider.persistent_comments[0]
+        assert comment["name"] == f"config-errors-{category}"
+        body = comment["body"]
+    else:
+        body = provider.comments[0]
+    assert f"repository cấu hình {category} (`config.global_settings_repo`)" in body
+    assert "Cấu hình dùng chung không hợp lệ" in body
+    assert "private-shared-value" not in body
+    assert "private_table" not in body
+    assert "Cannot declare" not in body
+    assert "Nội dung cấu hình" not in body
+
+
+@pytest.mark.parametrize("override", [None, "local"])
+def test_apply_repo_settings_merges_global_group_and_local(monkeypatch, override):
+    settings = get_settings()
+    original_config = copy.deepcopy(settings.as_dict()["PR_REVIEWER"])
+    local = '[pr_reviewer]\nnum_max_findings = 7\n'
+    if override is not None:
+        local += f'extra_instructions = "{override}"\n'
+    provider = FakeErrorReportingProvider([
+        ("global", b'[pr_reviewer]\nextra_instructions = "global"\nenable_intro_text = false\n'),
+        ("group", b'[pr_reviewer]\nextra_instructions = "group"\nnum_max_findings = 3\n'),
+        ("local", local.encode()),
+    ])
+    monkeypatch.setattr(utils, "get_git_provider_with_context", lambda pr_url: provider)
+    monkeypatch.delenv("AUTO_CAST_FOR_DYNACONF", raising=False)
+    try:
+        apply_repo_settings("https://gitlab.example.com/org/team/service/-/merge_requests/1")
+        assert settings.pr_reviewer.extra_instructions == (override or "group")
+        assert settings.pr_reviewer.num_max_findings == 7
+        assert settings.pr_reviewer.enable_intro_text is False
+        assert provider.comments == []
+    finally:
+        settings.unset("pr_reviewer")
+        settings.set("pr_reviewer", original_config, merge=False)
+
+
+def test_malformed_group_settings_does_not_block_global_or_local(monkeypatch):
+    settings = get_settings()
+    original_config = copy.deepcopy(settings.as_dict()["PR_REVIEWER"])
+    provider = FakeErrorReportingProvider([
+        ("global", b'[pr_reviewer]\nenable_intro_text = false\n'),
+        ("group", b'[private_group_section\n'),
+        ("local", b'[pr_reviewer]\nextra_instructions = "local-applied"\n'),
+    ])
+    monkeypatch.setattr(utils, "get_git_provider_with_context", lambda pr_url: provider)
+    monkeypatch.delenv("AUTO_CAST_FOR_DYNACONF", raising=False)
+    try:
+        apply_repo_settings("https://gitlab.example.com/org/team/service/-/merge_requests/1")
+        assert settings.pr_reviewer.enable_intro_text is False
+        assert settings.pr_reviewer.extra_instructions == "local-applied"
+        assert len(provider.comments) == 1
+        assert "repository cấu hình group" in provider.comments[0]
+        assert "private_group_section" not in provider.comments[0]
+    finally:
+        settings.unset("pr_reviewer")
+        settings.set("pr_reviewer", original_config, merge=False)
+
+
+def test_handle_configurations_errors_keeps_local_content_out_of_log_artifact(monkeypatch):
+    """Local config errors include config content in PR comment,
+    but log artifact omits raw config/secrets."""
+    logged = []
+    monkeypatch.setattr(
+        utils.get_logger(),
+        "warning",
+        lambda message, artifact: logged.append(artifact["body"])
+    )
+    provider = FakeMarkdownProvider()
+
+    handle_configurations_errors([{
+        "settings": b'[openai]\nkey = "sk-test-secret"\n[config]\nmodel =\n',
+        "error": "Invalid value",
+        "category": "local",
+    }], provider)
+
+    assert "sk-test-secret" in provider.persistent_comments[0]["body"]
+    assert "Invalid value" in logged[0]
+    assert "sk-test-secret" not in logged[0]

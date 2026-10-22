@@ -18,17 +18,22 @@ Coverage:
   walkthrough produced by ``process_pr_files_prediction``.
 """
 
+import re
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from urllib.parse import unquote, urlsplit
 
 import pytest
 import yaml
 from jinja2 import Environment, StrictUndefined, select_autoescape
 
+from pr_agent.algo.comment_identity import PRDescriptionHeader
 from pr_agent.algo.types import FilePatchInfo
-from pr_agent.algo.utils import PRDescriptionHeader, process_description
+from pr_agent.algo.utils import process_description
 from pr_agent.config_loader import get_settings
-from pr_agent.tools.pr_description import PRDescription
+from pr_agent.git_providers.gitlab_provider import GitLabProvider
+from pr_agent.tools.pr_description import PRDescription, sanitize_diagram
+from tests.unittest._settings_helpers import restore_settings, snapshot_settings
 
 KEYS_FIX = ["filename:", "language:", "changes_summary:", "changes_title:", "description:", "title:"]
 
@@ -51,6 +56,7 @@ def _make_instance(prediction_yaml: str = "") -> PRDescription:
 def _settings(
     *,
     add_original_user_description: bool = False,
+    publish_description_as_comment: bool = False,
     publish_labels: bool = False,
     enable_pr_type: bool = True,
     enable_pr_description: bool = True,
@@ -64,6 +70,7 @@ def _settings(
     settings = MagicMock()
     pd = settings.pr_description
     pd.add_original_user_description = add_original_user_description
+    pd.publish_description_as_comment = publish_description_as_comment
     pd.publish_labels = publish_labels
     pd.enable_pr_type = enable_pr_type
     pd.generate_ai_title = generate_ai_title
@@ -81,6 +88,93 @@ def _settings(
 # _prepare_data
 # ---------------------------------------------------------------------------
 class TestPrepareData:
+    @pytest.mark.parametrize(
+        ("prediction", "field", "value"),
+        [
+            ({"type": ["Unknown"], "title": "A title"}, "type.0", "Unknown"),
+            ({"type": ["Bug fix"]}, "title", None),
+            (
+                {"type": ["Bug fix"], "title": "A title", "pr_files": [{"filename": "app.py", "label": "bug fix"}]},
+                "pr_files.0.changes_title",
+                None,
+            ),
+        ],
+    )
+    @patch("pr_agent.tools.pr_description.get_logger")
+    @patch("pr_agent.tools.pr_description.get_settings")
+    def test_invalid_output_warns_once_without_changing_parsed_data(
+        self, mock_get_settings, mock_get_logger, prediction, field, value,
+    ):
+        mock_get_settings.return_value = _settings()
+        obj = _make_instance(yaml.dump(prediction))
+
+        obj._prepare_data()
+
+        assert obj.data == prediction
+        mock_get_logger.return_value.warning.assert_called_once_with(
+            "Description output failed schema validation",
+            artifact={"field": field, "value": value},
+        )
+
+    @patch("pr_agent.tools.pr_description.get_logger")
+    @patch("pr_agent.tools.pr_description.get_settings")
+    def test_valid_output_does_not_warn(self, mock_get_settings, mock_get_logger):
+        mock_get_settings.return_value = _settings()
+        obj = _make_instance(yaml.dump({
+            "type": ["Bug fix"],
+            "title": "Fix a runtime failure",
+            "description": "Preserve the original error.",
+        }))
+
+        obj._prepare_data()
+
+        mock_get_logger.return_value.warning.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("pr_agent.tools.pr_description.get_logger")
+    @patch("pr_agent.tools.pr_description.get_settings")
+    async def test_extended_description_can_contain_more_than_twenty_files(
+        self, mock_get_settings, mock_get_logger,
+    ):
+        mock_get_settings.return_value = _settings()
+        obj = _make_instance(yaml.dump({
+            "type": ["Bug fix"],
+            "title": "Describe all changed files",
+            "pr_files": [{"filename": "shown.py", "changes_title": "Shown", "label": "bug fix"}],
+        }))
+        obj.git_provider = MagicMock()
+        obj.git_provider.get_diff_files.return_value = [
+            SimpleNamespace(filename="shown.py"),
+            *(SimpleNamespace(filename=f"remaining_{index}.py") for index in range(20)),
+        ]
+
+        obj.prediction = await obj.extend_uncovered_files(obj.prediction)
+        obj._prepare_data()
+
+        assert len(obj.data["pr_files"]) == 21
+        mock_get_logger.return_value.warning.assert_not_called()
+
+    @patch("pr_agent.tools.pr_description.get_logger")
+    @patch("pr_agent.tools.pr_description.get_settings")
+    def test_assembled_description_still_checks_files_beyond_twenty(
+        self, mock_get_settings, mock_get_logger,
+    ):
+        mock_get_settings.return_value = _settings()
+        files = [
+            {"filename": f"file_{index}.py", "changes_title": "Change", "label": "bug fix"}
+            for index in range(20)
+        ]
+        files.append({"filename": "invalid.py", "label": "bug fix"})
+        obj = _make_instance(yaml.dump({"type": ["Bug fix"], "title": "Title", "pr_files": files}))
+
+        obj._prepare_data()
+
+        assert len(obj.data["pr_files"]) == 21
+        mock_get_logger.return_value.warning.assert_called_once_with(
+            "Description output failed schema validation",
+            artifact={"field": "pr_files.20.changes_title", "value": None},
+        )
+
     @patch("pr_agent.tools.pr_description.get_settings")
     def test_keys_are_reordered_in_canonical_sequence(self, mock_get_settings):
         mock_get_settings.return_value = _settings()
@@ -120,11 +214,31 @@ class TestPrepareData:
 
         assert obj.data["User Description"] == "Original body from user"
 
+    @patch("pr_agent.tools.pr_description.get_settings")
+    def test_user_description_is_skipped_when_published_as_comment(self, mock_get_settings):
+        mock_get_settings.return_value = _settings(
+            add_original_user_description=True, publish_description_as_comment=True
+        )
+        obj = _make_instance(yaml.dump({"title": "t", "description": "d"}))
+        obj.user_description = "Original body from user"
+
+        obj._prepare_data()
+
+        assert "User Description" not in obj.data
+
 
 # ---------------------------------------------------------------------------
 # _prepare_labels
 # ---------------------------------------------------------------------------
 class TestPrepareLabels:
+    @pytest.fixture(autouse=True)
+    def configured_labels(self):
+        snapshot = snapshot_settings(("config.enable_custom_labels", "custom_labels"))
+        get_settings().set("config.enable_custom_labels", True)
+        get_settings().set("custom_labels", {label: label for label in ("bug", "perf", "docs", "Refactor")})
+        yield
+        restore_settings(snapshot)
+
     @patch("pr_agent.tools.pr_description.get_settings")
     def test_labels_list_is_returned_stripped(self, mock_get_settings):
         mock_get_settings.return_value = _settings()
@@ -190,7 +304,7 @@ class TestPrepareAnswerWithMarkers:
         body_in = "<!-- pr_agent:type -->\npr_agent:type stays raw"
         obj = self._obj_with_user_description(body_in, {"title": "AI", "type": "Bug fix"})
 
-        _, body, _, _ = obj._prepare_pr_answer_with_markers()
+        _, body = obj._prepare_pr_answer_with_markers()
 
         # Guard present -> the plain marker is NOT replaced.
         assert "pr_agent:type stays raw" in body
@@ -204,7 +318,7 @@ class TestPrepareAnswerWithMarkers:
             {"title": "AI", "description": "Adds caching layer."},
         )
 
-        _, body, _, _ = obj._prepare_pr_answer_with_markers()
+        _, body = obj._prepare_pr_answer_with_markers()
 
         assert "Adds caching layer." in body
         assert "pr_agent:summary" not in body
@@ -217,7 +331,7 @@ class TestPrepareAnswerWithMarkers:
             {"title": "AI", "description": "Adds caching layer."},
         )
 
-        _, body, _, _ = obj._prepare_pr_answer_with_markers()
+        _, body = obj._prepare_pr_answer_with_markers()
 
         assert "Adds caching layer." not in body
         assert "pr_agent:summary" not in body
@@ -230,7 +344,7 @@ class TestPrepareAnswerWithMarkers:
             {"title": "AI", "description": "Adds caching layer."},
         )
 
-        _, body, _, _ = obj._prepare_pr_answer_with_markers()
+        _, body = obj._prepare_pr_answer_with_markers()
 
         assert "Adds caching layer." not in body
         assert "pr_agent:summary" not in body
@@ -243,7 +357,7 @@ class TestPrepareAnswerWithMarkers:
             {"title": "AI", "type": "Bug fix", "description": "Fix bug."},
         )
 
-        _, body, _, _ = obj._prepare_pr_answer_with_markers()
+        _, body = obj._prepare_pr_answer_with_markers()
 
         assert "### 🤖 Generated by PR Agent at deadbeef" in body
         # Header appears for both replaced markers.
@@ -257,7 +371,7 @@ class TestPrepareAnswerWithMarkers:
             {"title": "AI", "type": ["Bug fix", "Refactor"]},
         )
 
-        _, body, _, _ = obj._prepare_pr_answer_with_markers()
+        _, body = obj._prepare_pr_answer_with_markers()
 
         assert "Bug fix, Refactor" in body
 
@@ -270,12 +384,40 @@ class TestPrepareAnswerWithMarkers:
             {"title": "AI", "changes_diagram": diagram},
         )
 
-        _, body, _, _ = obj._prepare_pr_answer_with_markers()
+        _, body = obj._prepare_pr_answer_with_markers()
 
         # Both forms are substituted with the diagram.
         assert body.count("```mermaid") == 2
         assert "<!-- pr_agent:diagram -->" not in body
         assert "pr_agent:diagram" not in body.replace("```mermaid", "")
+
+    @pytest.mark.parametrize("marker", ["pr_agent:diagram", "<!-- pr_agent:diagram -->"])
+    @pytest.mark.parametrize("label", [r"C:\Users\demo", r"\d+", r"literal\ntext"])
+    @patch("pr_agent.tools.pr_description.get_settings")
+    def test_diagram_marker_preserves_backslashes(self, mock_get_settings, label, marker):
+        mock_get_settings.return_value = _settings()
+        diagram = sanitize_diagram(f'```mermaid\nflowchart LR\nA["{label}"] --> B\n```')
+        obj = self._obj_with_user_description(
+            f"Before\n{marker}\nAfter",
+            {"title": "AI", "changes_diagram": diagram},
+        )
+
+        _, body = obj._prepare_pr_answer_with_markers()
+
+        assert body == f"Before\n{diagram}\nAfter"
+
+    @patch("pr_agent.tools.pr_description.get_settings")
+    def test_empty_diagram_leaves_marker_unchanged(self, mock_get_settings):
+        mock_get_settings.return_value = _settings()
+        original_body = "Before\npr_agent:diagram\nAfter"
+        obj = self._obj_with_user_description(
+            original_body,
+            {"title": "AI", "changes_diagram": ""},
+        )
+
+        _, body = obj._prepare_pr_answer_with_markers()
+
+        assert body == original_body
 
     @patch("pr_agent.tools.pr_description.get_settings")
     def test_title_falls_back_when_generate_ai_title_disabled(self, mock_get_settings):
@@ -285,7 +427,7 @@ class TestPrepareAnswerWithMarkers:
             {"title": "AI Title", "description": "x"},
         )
 
-        title, _, _, _ = obj._prepare_pr_answer_with_markers()
+        title, _ = obj._prepare_pr_answer_with_markers()
 
         assert title == "Original title"
 
@@ -314,7 +456,7 @@ class TestPrepareAnswer:
         obj = self._obj({"title": "t", "labels": ["bug"], "description": "d"})
         obj.git_provider.is_supported.side_effect = lambda cap: cap in {"gfm_markdown", "get_labels"}
 
-        _, body, _, _ = obj._prepare_pr_answer()
+        _, body, _ = obj._prepare_pr_answer()
 
         # The Labels section is suppressed for providers with native label support.
         assert "Labels" not in body
@@ -325,7 +467,7 @@ class TestPrepareAnswer:
         mock_get_settings.return_value = _settings(enable_pr_type=False)
         obj = self._obj({"title": "t", "type": "Bug fix", "description": "d"})
 
-        _, body, _, _ = obj._prepare_pr_answer()
+        _, body, _ = obj._prepare_pr_answer()
 
         assert "PR Type" not in body
         assert "Bug fix" not in body
@@ -335,7 +477,7 @@ class TestPrepareAnswer:
         mock_get_settings.return_value = _settings(enable_pr_description=False)
         obj = self._obj({"title": "t", "type": "Bug fix", "description": "AI summary"})
 
-        _, body, _, _ = obj._prepare_pr_answer()
+        _, body, _ = obj._prepare_pr_answer()
 
         assert "AI summary" not in body
         # The other sections are untouched.
@@ -353,7 +495,7 @@ class TestPrepareAnswer:
             "pr_files": [{"filename": "app.py", "changes_title": "c", "label": "enhancement"}],
         })
 
-        _, body, walkthrough, _ = obj._prepare_pr_answer()
+        _, body, walkthrough = obj._prepare_pr_answer()
 
         assert "AI summary" not in body
         assert f"### {PRDescriptionHeader.DIAGRAM_WALKTHROUGH.value}" in body
@@ -367,7 +509,7 @@ class TestPrepareAnswer:
         mock_get_settings.return_value = _settings()
         obj = self._obj({"title": "t", "description": "AI summary"})
 
-        _, body, _, _ = obj._prepare_pr_answer()
+        _, body, _ = obj._prepare_pr_answer()
 
         assert "AI summary" in body
 
@@ -379,7 +521,7 @@ class TestPrepareAnswer:
             "description": "Intro\n- one\n- two",
         })
 
-        _, body, _, _ = obj._prepare_pr_answer()
+        _, body, _ = obj._prepare_pr_answer()
 
         # Bullet readability: single newline before "-" becomes double newline.
         assert "Intro\n\n- one\n\n- two" in body
@@ -390,7 +532,7 @@ class TestPrepareAnswer:
         diagram = "\n```mermaid\ngraph LR\nA --> B\n```"
         obj = self._obj({"title": "t", "description": "d", "changes_diagram": diagram})
 
-        _, body, _, _ = obj._prepare_pr_answer()
+        _, body, _ = obj._prepare_pr_answer()
 
         assert f"### {PRDescriptionHeader.DIAGRAM_WALKTHROUGH.value}" in body
         assert "```mermaid" in body
@@ -400,7 +542,7 @@ class TestPrepareAnswer:
         mock_get_settings.return_value = _settings(generate_ai_title=False)
         obj = self._obj({"description": "d"})
 
-        title, _, _, _ = obj._prepare_pr_answer()
+        title, _, _ = obj._prepare_pr_answer()
 
         assert title == "Original title"
 
@@ -423,28 +565,65 @@ class TestProcessPRFilesPrediction:
         obj = self._obj(gfm=False)
         value = {"backend": [("src/app.py", "Add cache", "Adds a bounded cache.")]}
 
-        body, comments = obj.process_pr_files_prediction("PRE", value)
+        body = obj.process_pr_files_prediction("PRE", value)
 
         assert body == "PRE"
-        assert comments == []
+        obj.git_provider.get_diff_files.assert_not_called()
 
     @patch("pr_agent.tools.pr_description.get_settings")
-    def test_gfm_provider_emits_table_with_file_row(self, mock_get_settings):
+    def test_gfm_provider_reuses_diff_files_across_semantic_groups(self, mock_get_settings):
         mock_get_settings.return_value = _settings()
-        diff = FilePatchInfo("", "", "", "src/app.py")
-        diff.num_plus_lines = 5
-        diff.num_minus_lines = 2
-        obj = self._obj(gfm=True, diff_files=[diff])
-        value = {"backend": [("src/app.py", "Add cache", "Adds a bounded cache.")]}
+        obj = self._obj(gfm=True, diff_files=[
+            FilePatchInfo("", "", "", "README.md", num_plus_lines=1, num_minus_lines=0),
+            FilePatchInfo("", "", "", "src/app.py", num_plus_lines=5, num_minus_lines=2),
+        ])
+        value = {
+            "backend": [("src/app.py", "Add cache", "Adds a bounded cache.")],
+            "documentation": [("README.md", "Document cache", "Explains cache behavior.")],
+        }
 
-        body, comments = obj.process_pr_files_prediction("", value)
+        body = obj.process_pr_files_prediction("", value)
 
         assert body.startswith("<table>")
         assert body.rstrip().endswith("</table>")
         assert "<strong>Backend</strong>" in body
         assert "<strong>app.py</strong>" in body
-        assert "+5/-2" in body
-        assert comments == []
+        app_body, readme_body = body.split("<strong>README.md</strong>", 1)
+        assert "+5/-2" in app_body
+        assert "+1/-0" in readme_body
+        obj.git_provider.get_diff_files.assert_called_once_with()
+
+    @pytest.mark.parametrize("value", [{}, {"backend": []}])
+    @patch("pr_agent.tools.pr_description.get_settings")
+    def test_empty_file_groups_do_not_fetch_diffs(self, mock_get_settings, value):
+        mock_get_settings.return_value = _settings()
+        obj = self._obj(gfm=True)
+
+        body = obj.process_pr_files_prediction("", value)
+
+        assert body.startswith("<table>")
+        assert body.rstrip().endswith("</table>")
+        obj.git_provider.get_diff_files.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("plus", "minus", "expected_stats"), [(5, 2, "+5/-2"), (0, 0, "[link]"), (10**12, 0, "[link]")],
+    )
+    @patch("pr_agent.tools.pr_description.get_settings")
+    def test_normalized_first_match_and_missing_file_stats(self, mock_get_settings, plus, minus, expected_stats):
+        mock_get_settings.return_value = _settings()
+        obj = self._obj(gfm=True, diff_files=[
+            FilePatchInfo("", "", "", "/SRC/APP.py/", num_plus_lines=plus, num_minus_lines=minus),
+            FilePatchInfo("", "", "", "src/app.PY", num_plus_lines=99, num_minus_lines=88),
+        ])
+        value = {"backend": [("src/App.py", "", ""), ("missing.py", "", "")]}
+
+        body = obj.process_pr_files_prediction("", value)
+
+        app_body, missing_body = body.split("<strong>missing.py</strong>", 1)
+        assert expected_stats in app_body
+        assert "+99/-88" not in body
+        assert '<a href=""></a>' in missing_body
+        obj.git_provider.get_diff_files.assert_called_once_with()
 
     @patch("pr_agent.tools.pr_description.get_settings")
     def test_adaptive_collapsible_triggers_above_threshold(self, mock_get_settings):
@@ -458,9 +637,28 @@ class TestProcessPRFilesPrediction:
             ]
         }
 
-        body, _ = obj.process_pr_files_prediction("", value)
+        body = obj.process_pr_files_prediction("", value)
 
         assert "<details><summary>2 file</summary>" in body
+        obj.git_provider.get_diff_files.assert_called_once_with()
+
+    def test_rendered_href_preserves_reserved_filename_from_gitlab_provider(self):
+        filename = "src/a#b?c&d space-☃.py"
+        provider = GitLabProvider.__new__(GitLabProvider)
+        provider.gl = SimpleNamespace(url="https://gitlab.example")
+        provider.id_project = "owner/repo"
+        provider.mr = SimpleNamespace(
+            web_url="https://gitlab.example/owner/repo/-/merge_requests/7",
+            source_branch="feature/test",
+        )
+        link = provider.get_line_link(filename, -1)
+        obj = _make_instance()
+
+        row = obj.add_file_data("", "+1/-0", "", filename, "<strong>a.py</strong>", link, "")
+
+        rendered_link = re.search(r'href="([^"]+)"', row).group(1)
+        assert rendered_link == link
+        assert unquote(urlsplit(rendered_link).path).endswith(f"/{filename}")
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +678,7 @@ class TestRoundTripWithProcessDescription:
         obj.git_provider.get_line_link.return_value = "https://example/blob/main/src/app.py#L1"
 
         value = {"backend": [("src/app.py", "Add cache", "Adds a bounded cache.")]}
-        table, _ = obj.process_pr_files_prediction("", value)
+        table = obj.process_pr_files_prediction("", value)
 
         full_description = (
             "Some intro text.\n\n___\n\n"
@@ -545,6 +743,40 @@ class TestPrepareFileLabelsEdgeCases:
         assert "'" not in recovered_name
         assert '"' not in recovered_name
 
+    def test_null_required_field_skips_only_that_file(self):
+        # A null/empty required field passes the old key-presence check and
+        # then raised on .strip(), which dropped the file through the broad
+        # except while its valid siblings were kept. An empty field must skip
+        # only the offending file.
+        obj = _make_instance()
+        obj.vars = {"include_file_summary_changes": True}
+        obj.data = {
+            "pr_files": [
+                {
+                    "filename": "src/ok.py",
+                    "changes_title": "Keep me",
+                    "changes_summary": "Valid summary.",
+                    "label": "backend",
+                },
+                {
+                    "filename": "src/null_label.py",
+                    "changes_title": "Null label",
+                    "changes_summary": "Valid summary.",
+                    "label": None,
+                },
+                {
+                    "filename": "src/empty_summary.py",
+                    "changes_title": "Empty summary",
+                    "changes_summary": "   ",
+                    "label": "backend",
+                },
+            ]
+        }
+
+        labels = obj._prepare_file_labels()
+
+        assert labels == {"backend": [("src/ok.py", "Keep me", "Valid summary.")]}
+
 
 # ---------------------------------------------------------------------------
 # prompt gating for enable_pr_description
@@ -559,6 +791,7 @@ class TestDescriptionPromptGating:
         "language": "python",
         "diff": "diff",
         "extra_instructions": "",
+        "artifact_context": None,
         "skills_context": "",
         "repo_context": "",
         "commit_messages_str": "",
@@ -577,6 +810,28 @@ class TestDescriptionPromptGating:
             autoescape=select_autoescape(default_for_string=False), undefined=StrictUndefined)
         return environment.from_string(template).render(
             {**self.PROMPT_VARS, "enable_pr_description": enable_pr_description})
+
+    @pytest.mark.parametrize("prompt_name", [
+        "pr_description_prompt",
+        "pr_description_only_description_prompts",
+    ])
+    @patch("pr_agent.tools.pr_description.get_logger")
+    def test_duplicate_example_types_match_output_model(self, mock_get_logger, prompt_name):
+        template = getattr(get_settings(), prompt_name).user
+        environment = Environment(
+            autoescape=select_autoescape(default_for_string=False), undefined=StrictUndefined)
+        rendered = environment.from_string(template).render(
+            {**self.PROMPT_VARS, "enable_pr_description": True})
+        example = rendered.split("Example output:", 1)[1].split("type:", 1)[1].split("description:", 1)[0]
+        example_types = [
+            line.removeprefix("- ").strip()
+            for line in example.splitlines()
+            if line.startswith("- ") and line.strip() != "- ..."
+        ]
+
+        assert len(example_types) >= 2
+        assert PRDescription._validate_description_schema({"type": example_types, "title": "Example"})
+        mock_get_logger.return_value.warning.assert_not_called()
 
     @pytest.mark.parametrize("part", ["system", "user"])
     def test_description_field_is_dropped_when_disabled(self, part):
