@@ -1,7 +1,6 @@
 import pytest
 
-from pr_agent.algo.model_cost import (DEFAULT_MODEL_PRICES, compute_call_cost,
-                                      get_model_prices)
+from pr_agent.algo.model_cost import DEFAULT_MODEL_PRICES, compute_call_cost, get_model_prices
 from pr_agent.config_loader import get_settings
 from tests.unittest._settings_helpers import restore_settings, snapshot_settings
 

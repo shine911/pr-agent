@@ -7,7 +7,6 @@ Mục TODO, and PR description ticket extraction. The goal is to
 lock in branches that are not already covered by:
 
 - tests/unittest/test_convert_to_markdown.py
-- tests/unittest/test_parse_code_suggestion.py
 - tests/unittest/test_extract_issue_from_branch.py
 - tests/unittest/test_pr_description.py
 
@@ -20,13 +19,12 @@ from unittest.mock import Mock
 
 import pytest
 
+from pr_agent.algo.comment_identity import emphasize_header
 from pr_agent.algo.utils import (
     convert_to_markdown_v2,
-    emphasize_header,
     format_todo_item,
     format_todo_items,
     is_value_no,
-    parse_code_suggestion,
     process_can_be_split,
     ticket_markdown_logic,
 )
@@ -438,6 +436,18 @@ class TestProcessCanBeSplit:
         )
         assert "Không có nhiều chủ đề PR" in out
 
+    def test_string_returns_no_themes(self):
+        out = process_can_be_split("🔀", "No")
+        assert "Không có nhiều chủ đề PR" in out
+
+    def test_dict_returns_no_themes(self):
+        out = process_can_be_split("🔀", {"title": "single mapping"})
+        assert "Không có nhiều chủ đề PR" in out
+
+    def test_affirmative_value_does_not_claim_no_themes(self):
+        out = process_can_be_split("🔀", True)
+        assert "Không có nhiều chủ đề PR" not in out
+
     def test_multiple_themes_render_details(self):
         out = process_can_be_split(
             "🔀",
@@ -549,66 +559,6 @@ class TestFormatTodoItems:
 
 
 # ---------------------------------------------------------------------------
-# parse_code_suggestion — gfm branch with relevant_line is not exercised
-# by tests/unittest/test_parse_code_suggestion.py.
-# ---------------------------------------------------------------------------
-
-
-class TestParseCodeSuggestionGfm:
-    def test_relevant_line_with_markdown_link(self):
-        suggestion = {
-            "relevant_file": "src/app.py",
-            "suggestion": "Use a constant",
-            "relevant_line": "[`foo = 1`](https://example.com/diff#L10)",
-        }
-        out = parse_code_suggestion(suggestion, gfm_supported=True)
-        assert out.startswith("<table>")
-        assert "<tr><td>relevant file</td><td>src/app.py</td></tr>" in out
-        assert "<strong>" in out and "Use a constant" in out
-        assert "<a href='https://example.com/diff#L10'>" in out
-        assert out.rstrip().endswith("<hr>")
-
-    def test_relevant_line_without_link(self):
-        suggestion = {
-            "relevant_file": "src/app.py",
-            "suggestion": "Use a constant",
-            "relevant_line": "`foo = 1`",
-        }
-        out = parse_code_suggestion(suggestion, gfm_supported=True)
-        # No "](" link delimiter → no anchor, just the (leading-backtick
-        # stripped) literal line.
-        assert "<a href=" not in out
-        assert "<tr><td>relevant line</td>" in out
-        assert "foo = 1" in out
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "parse_code_suggestion only left-strips a leading backtick from "
-            "relevant_line; the trailing backtick is not stripped. This xfail "
-            "encodes the desired symmetric stripping behavior."
-        ),
-    )
-    def test_relevant_line_strips_both_backticks(self):
-        suggestion = {
-            "relevant_file": "src/app.py",
-            "suggestion": "Use a constant",
-            "relevant_line": "`foo = 1`",
-        }
-        out = parse_code_suggestion(suggestion, gfm_supported=True)
-        assert "<td>foo = 1</td>" in out
-
-    def test_falls_back_to_non_gfm_when_no_relevant_line(self):
-        # Without 'relevant_line', the function takes the non-gfm code path
-        # even when gfm_supported=True.
-        suggestion = {"suggestion": "S", "description": "D"}
-        out = parse_code_suggestion(suggestion, gfm_supported=True)
-        assert "<table>" not in out
-        assert "**suggestion:**" in out
-        assert "**description:**" in out
-
-
-# ---------------------------------------------------------------------------
 # insert_br_after_x_chars — edges around its very short-circuit branches.
 # ---------------------------------------------------------------------------
 
@@ -688,9 +638,18 @@ class TestExtractTicketLinksFromPRDescription:
         assert out == []
 
     def test_hash_only_rejects_long_numbers(self):
-        desc = "Fixes #12345 (5 digits, looks like a code, not an issue)"
+        # The bound now matches BRANCH_ISSUE_PATTERN, which accepts up to six digits, so a
+        # number is only rejected once it is too long to be an issue in any repository.
+        desc = "Fixes #1234567 (7 digits, looks like a code, not an issue)"
         out = extract_ticket_links_from_pr_description(desc, "foo/bar")
         assert out == []
+
+    def test_hash_only_accepts_a_six_digit_issue(self):
+        # 123456-fix as a branch name already resolves; the same number in the description
+        # must resolve too.
+        desc = "Fixes #123456"
+        out = extract_ticket_links_from_pr_description(desc, "foo/bar")
+        assert out == ["https://github.com/foo/bar/issues/123456"]
 
     def test_results_capped_at_three(self):
         desc = " ".join(f"foo/bar#{i}" for i in range(1, 8))

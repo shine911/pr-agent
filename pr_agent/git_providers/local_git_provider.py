@@ -1,12 +1,16 @@
 from collections import Counter
 from pathlib import Path
-from typing import List
 
 from git import Repo
 
+from pr_agent.agent.request_policy import policy_metadata
+from pr_agent.algo.comment_identity import format_pr_code_suggestions_header
+from pr_agent.algo.file_filter import filter_ignored
+from pr_agent.algo.language_handler import build_language_file_matcher
+from pr_agent.algo.run_output import show_run_details
 from pr_agent.algo.types import EDIT_TYPE, FilePatchInfo
 from pr_agent.config_loader import _find_repository_root, get_settings
-from pr_agent.git_providers.git_provider import GitProvider
+from pr_agent.git_providers.git_provider import GitProvider, cache_languages
 from pr_agent.log import get_logger
 
 
@@ -15,7 +19,7 @@ class PullRequestMimic:
     This class mimics the PullRequest class from the PyGithub library for the LocalGitProvider.
     """
 
-    def __init__(self, title: str, diff_files: List[FilePatchInfo]):
+    def __init__(self, title: str, diff_files: list[FilePatchInfo]):
         self.title = title
         self.diff_files = diff_files
 
@@ -29,6 +33,11 @@ class LocalGitProvider(GitProvider):
     It supports the /review, /describe and /improve capabilities; each writes its output to a
     file (review.md, description.md, improve.md) since there is no hosted PR to comment on.
     """
+
+    def get_request_policy_metadata(self, required_fields: set[str]) -> dict:
+        # A local comparison has branches, but no hosted PR author or labels.
+        return policy_metadata(title=self.pr.title, sender="", repo_full_name="",
+                               source_branch=self.head_branch_name, target_branch=self.target_branch_name)
 
     def __init__(self, target_branch_name, incremental=False):
         self.repo_path = _find_repository_root()
@@ -68,7 +77,14 @@ class LocalGitProvider(GitProvider):
             return False
         return True
 
+    def supports_code_suggestions_artifact(self) -> bool:
+        return True
+
     def get_diff_files(self) -> list[FilePatchInfo]:
+        cached_diff_files = getattr(self, "diff_files", None)
+        if cached_diff_files is not None:
+            return cached_diff_files
+
         diffs = self.repo.head.commit.diff(
             self.repo.merge_base(self.repo.head, self.repo.branches[self.target_branch_name]),
             create_patch=True,
@@ -76,14 +92,20 @@ class LocalGitProvider(GitProvider):
         )
         diff_files = []
         for diff_item in diffs:
-            if diff_item.a_blob is not None:
-                original_file_content_str = diff_item.a_blob.data_stream.read().decode('utf-8')
-            else:
-                original_file_content_str = ""  # empty file
-            if diff_item.b_blob is not None:
-                new_file_content_str = diff_item.b_blob.data_stream.read().decode('utf-8')
-            else:
-                new_file_content_str = ""  # empty file
+            filename = diff_item.b_path or diff_item.a_path
+            try:
+                if diff_item.a_blob is not None:
+                    original_file_content_str = diff_item.a_blob.data_stream.read().decode("utf-8")
+                else:
+                    original_file_content_str = ""  # empty file
+                if diff_item.b_blob is not None:
+                    new_file_content_str = diff_item.b_blob.data_stream.read().decode("utf-8")
+                else:
+                    new_file_content_str = ""  # empty file
+                patch = diff_item.diff.decode("utf-8")
+            except UnicodeDecodeError as e:
+                get_logger().warning(f"Skipping non-UTF-8 file in local diff: {filename!r} ({e})")
+                continue
             edit_type = EDIT_TYPE.MODIFIED
             if diff_item.new_file:
                 edit_type = EDIT_TYPE.ADDED
@@ -94,29 +116,23 @@ class LocalGitProvider(GitProvider):
             diff_files.append(
                 FilePatchInfo(original_file_content_str,
                               new_file_content_str,
-                              diff_item.diff.decode('utf-8'),
-                              diff_item.b_path or diff_item.a_path,
+                              patch,
+                              filename,
                               edit_type=edit_type,
                               old_filename=None if diff_item.a_path == diff_item.b_path else diff_item.a_path
                               )
             )
-        self.diff_files = diff_files
-        return diff_files
+        self.diff_files = filter_ignored(diff_files, platform="local")
+        return self.diff_files
 
-    def get_files(self) -> List[str]:
+    def get_files(self) -> list[str]:
         """
         Returns a list of files with changes in the diff.
         """
-        diff_index = self.repo.head.commit.diff(
-            self.repo.merge_base(self.repo.head, self.repo.branches[self.target_branch_name]),
-            R=True
-        )
-        # Get the list of changed files
-        diff_files = [item.a_path for item in diff_index]
-        return diff_files
+        return [file.filename for file in self.get_diff_files()]
 
     def publish_description(self, pr_title: str, pr_body: str):
-        with open(self.description_path, "w") as file:
+        with open(self.description_path, "w", encoding="utf-8") as file:
             title = self.get_pr_title() if pr_title is None else pr_title
             file.write(title + '\n' + pr_body)
 
@@ -129,17 +145,22 @@ class LocalGitProvider(GitProvider):
             # Write the string to the file
             file.write(pr_comment)
 
-    def publish_inline_comment(self, body: str, relevant_file: str, relevant_line_in_file: str, original_suggestion=None):
+    def supports_comment_publish_confirmation(self) -> bool:
+        return False
+
+    def publish_inline_comment(self, body: str, relevant_file: str,
+                               relevant_line_in_file: str, original_suggestion=None):
         raise NotImplementedError('Publishing inline comments is not implemented for the local git provider')
 
     def publish_inline_comments(self, comments: list[dict]):
         raise NotImplementedError('Publishing inline comments is not implemented for the local git provider')
 
-    def publish_code_suggestion(self, body: str, relevant_file: str,
-                                relevant_lines_start: int, relevant_lines_end: int):
-        raise NotImplementedError('Publishing code suggestions is not implemented for the local git provider')
-
     def publish_code_suggestions(self, code_suggestions: list) -> bool:
+        return self.publish_code_suggestions_artifact(code_suggestions)
+
+    def publish_code_suggestions_artifact(
+            self, code_suggestions: list, artifact_footer: str = "",
+            no_suggestions_message: str = "No code suggestions found for the PR.") -> bool:
         """
         Write /improve output to a file (improve.md by default).
 
@@ -160,8 +181,12 @@ class LocalGitProvider(GitProvider):
                 location += f" [{start}-{end}]" if end is not None and end != start else f" [{start}]"
             header = f"### {location}" if location else "### Suggestion"
             sections.append(f"{header}\n\n{suggestion.get('body', '').strip()}")
-        pr_body = "# PR Code Suggestions ✨\n\n" + "\n\n".join(sections) if sections \
-            else "# PR Code Suggestions ✨\n\nNo code suggestions found for the PR."
+        header = format_pr_code_suggestions_header(markdown_level=1)
+        pr_body = f"{header}\n\n" + "\n\n".join(sections) if sections \
+            else f"{header}\n\n{no_suggestions_message}"
+        pr_body += artifact_footer
+        if not sections and get_settings().get("config.output_run_details", False):
+            pr_body += show_run_details(False)
         with open(self.improve_path, "w", encoding="utf-8") as file:
             file.write(pr_body)
         return True
@@ -175,18 +200,19 @@ class LocalGitProvider(GitProvider):
     def remove_comment(self, comment):
         pass  # Not applicable to the local git provider, but required by the interface
 
-    def add_eyes_reaction(self, comment):
-        pass  # Not applicable to the local git provider, but required by the interface
+    def add_eyes_reaction(self, issue_comment_id: int, disable_eyes: bool = False) -> int | None:
+        return None  # Not applicable to the local git provider, but required by the interface
 
-    def get_commit_messages(self):
-        pass  # Not applicable to the local git provider, but required by the interface
+    def get_commit_messages(self) -> str:
+        return ""  # Not applicable to the local git provider, but required by the interface
 
     def get_repo_settings(self):
         pass  # Not applicable to the local git provider, but required by the interface
 
-    def remove_reaction(self, comment):
-        pass  # Not applicable to the local git provider, but required by the interface
+    def remove_reaction(self, issue_comment_id: int, reaction_id: int) -> bool:
+        return True  # Not applicable to the local git provider, but required by the interface
 
+    @cache_languages
     def get_languages(self):
         """
         Calculate percentage of languages in repository. Used for hunk prioritisation.
@@ -194,39 +220,19 @@ class LocalGitProvider(GitProvider):
         Keys are language NAMES (e.g. "Python"), not raw extensions: the consumer
         sort_files_by_main_languages() maps each name back to its extensions, so
         returning extensions ("py") silently drops every file into the "Other"
-        bucket and defeats the prioritisation this method exists for. Invert the
-        settings map (name -> [extensions]) into an extension -> name lookup;
-        files with unknown extensions are left out and fall through to "Other".
+        bucket and defeats the prioritisation this method exists for. Use the
+        shared configured filename matcher so all providers apply the same
+        full-filename, multipart-extension, and case-sensitive rules.
         """
-        # Invert to a filename-token -> language lookup. Map entries are mostly
-        # ".ext", but also include multi-part extensions (".cmake.in") and full
-        # filenames ("Dockerfile", "Makefile"); normalize the glob form ("*.bsl").
-        ext_to_lang = {}
         lang_map = get_settings().get("language_extension_map_org", {}) or {}
-        for language, extensions in lang_map.items():
-            for ext in extensions:
-                ext_to_lang.setdefault(ext.lower().lstrip("*"), language)
-
-        def _match_language(name: str):
-            # Full-filename rules (Dockerfile, Makefile) carry no extension.
-            language = ext_to_lang.get(name.lower())
-            if language:
-                return language
-            # Try progressively shorter dotted suffixes so multi-part extensions
-            # (".cmake.in") win over their simple tail (".in") when both exist.
-            parts = name.split(".")
-            for i in range(1, len(parts)):
-                language = ext_to_lang.get("." + ".".join(parts[i:]).lower())
-                if language:
-                    return language
-            return None
+        get_language = build_language_file_matcher(lang_map)
 
         # Get all files in repository
         filepaths = [Path(item.path) for item in self.repo.tree().traverse() if item.type == 'blob']
         # Identify language by filename (mapped to its language name) and count
         lang_count = Counter()
         for filepath in filepaths:
-            language = _match_language(filepath.name)
+            language = get_language(filepath.name)
             if language:
                 lang_count[language] += 1
         # Convert counts to percentages
@@ -234,7 +240,25 @@ class LocalGitProvider(GitProvider):
         return {lang: count / total * 100 for lang, count in lang_count.items()}
 
     def get_pr_branch(self):
-        return self.repo.head
+        return self.head_branch_name
+
+    def get_repo_file_content(self, file_path: str, from_default_branch: bool = False) -> str:
+        """Get content of a file from the target branch.
+
+        Reads the committed target-branch version, never HEAD or the working tree, so the
+        reviewed changes cannot supply their own instruction files. A local checkout has no
+        separate default branch, so from_default_branch reads the target branch as well.
+        """
+        try:
+            blob = self.repo.commit(self.target_branch_name).tree / file_path
+        except KeyError:
+            return ""
+        if blob.type != "blob":
+            return ""
+        return blob.data_stream.read().decode("utf-8", errors="replace")
+
+    def get_repo_context_ref(self, from_default_branch: bool = False) -> str | None:
+        return self.repo.commit(self.target_branch_name).hexsha
 
     def get_user_id(self):
         return -1  # Not used anywhere for the local provider, but required by the interface
@@ -243,8 +267,7 @@ class LocalGitProvider(GitProvider):
         commits_diff = list(self.repo.iter_commits(self.target_branch_name + '..HEAD'))
         # Get the commit messages and concatenate
         commit_messages = " ".join([commit.message for commit in commits_diff])
-        # TODO Handle the description better - maybe use gpt-3.5 summarisation here?
-        return commit_messages[:200]  # Use max 200 characters
+        return commit_messages
 
     def get_pr_title(self):
         """

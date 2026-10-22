@@ -4,11 +4,9 @@ Unit tests for GitLabProvider.get_conversation_history()
 Run with:
     PYTHONPATH=. ./.venv/bin/pytest tests/unittest/test_gitlab_history_context.py -v
 """
-import types
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,8 +1,12 @@
 import re
+from decimal import Decimal
 
-from pr_agent.algo.run_details import (get_run_details, init_run_details,
-                                       record_ai_call, record_model_used)
-from pr_agent.algo.utils import show_run_details
+import pytest
+
+from pr_agent.algo import run_details
+from pr_agent.algo.run_details import get_run_details, init_run_details, record_ai_call, record_model_used
+from pr_agent.algo.run_output import append_run_details, show_run_details
+from pr_agent.config_loader import get_settings
 
 
 class _Usage:
@@ -10,6 +14,15 @@ class _Usage:
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.total_tokens = total_tokens
+
+
+@pytest.fixture(autouse=True)
+def disable_cost_output_by_default():
+    settings = get_settings()
+    previous = settings.config.get("output_run_cost", False)
+    settings.set("config.output_run_cost", False)
+    yield
+    settings.set("config.output_run_cost", previous)
 
 
 def test_renders_all_fields_in_a_details_block_when_gfm_supported():
@@ -86,6 +99,40 @@ def test_omits_ai_calls_line_when_no_calls_were_recorded():
     assert "AI calls:" not in output
 
 
+def test_renders_prompt_cache_line_when_cache_usage_reported():
+    init_run_details()
+    record_model_used("anthropic/claude-sonnet-5", is_fallback=False)
+    record_ai_call(
+        {"prompt_tokens": 1234, "cache_read_input_tokens": 900, "cache_creation_input_tokens": 200}
+    )
+
+    output = show_run_details(gfm_supported=True)
+
+    assert "Prompt cache: 900 read / 200 written" in output
+
+
+def test_omits_cache_line_when_only_read_or_creation_reported():
+    init_run_details()
+    record_model_used("anthropic/claude-sonnet-5", is_fallback=False)
+    record_ai_call({"prompt_tokens": 10, "cache_read_input_tokens": 7})
+
+    output = show_run_details(gfm_supported=True)
+
+    assert "Prompt cache: 7 read" in output
+    assert "written" not in output
+
+
+def test_omits_prompt_cache_line_when_no_cache_usage():
+    init_run_details()
+    record_model_used("anthropic/claude-sonnet-5", is_fallback=False)
+    record_ai_call({"prompt_tokens": 10, "completion_tokens": 2})
+
+    output = show_run_details(gfm_supported=True)
+
+    assert "Tokens: 10 in / 2 out / 12 total" in output
+    assert "Prompt cache:" not in output
+
+
 def test_returns_empty_string_when_no_model_was_recorded():
     init_run_details()
 
@@ -101,3 +148,136 @@ def test_returns_empty_string_when_collector_not_initialized():
         assert show_run_details(gfm_supported=True) == ""
     finally:
         run_details._run_details.reset(token)
+
+
+def test_disabled_cost_output_preserves_existing_run_details_byte_for_byte(monkeypatch):
+    monkeypatch.setattr(run_details.time, "monotonic", lambda: 108.2)
+    details = init_run_details()
+    details.start_time = 100.0
+    record_model_used("model-a", is_fallback=False)
+    record_ai_call(_Usage(10, 2, 12), model="model-a", cost_usd=Decimal("0.0842"))
+
+    output = show_run_details(gfm_supported=True)
+
+    assert output == (
+        "\n<hr>\n<details> <summary><strong>⚙️ Agent run details</strong></summary>\n\n"
+        "- Model: model-a\n"
+        "- Tokens: 10 in / 2 out / 12 total\n"
+        "- Time cost: 8.2s\n"
+        "- AI calls: 1\n\n"
+        "</details>\n"
+    )
+
+
+def test_renders_complete_cost_and_rounded_multi_model_breakdown():
+    get_settings().set("config.output_run_cost", True)
+    init_run_details()
+    record_model_used("model-b", is_fallback=True)
+    record_ai_call(_Usage(10, 2, 12), model="model-a", cost_usd=Decimal("0.07104"))
+    record_ai_call(_Usage(5, 1, 6), model="model-b", cost_usd=Decimal("0.01321"))
+
+    output = show_run_details(gfm_supported=True)
+
+    assert "Estimated API cost: $0.08 USD" in output
+    assert "  - model-a: $0.07 USD" in output
+    assert "  - model-b: $0.01 USD" in output
+
+
+def test_renders_partial_cost_with_priced_call_count():
+    get_settings().set("config.output_run_cost", True)
+    init_run_details()
+    record_model_used("model-a", is_fallback=False)
+    record_ai_call(_Usage(10, 2, 12), model="model-a", cost_usd=Decimal("0.0042"))
+    record_ai_call(None, model="model-b")
+
+    output = show_run_details(gfm_supported=True)
+
+    assert "Estimated API cost: <$0.01 USD (partial: 1 of 2 successful calls priced)" in output
+
+
+def test_unavailable_cost_never_renders_as_zero():
+    get_settings().set("config.output_run_cost", True)
+    init_run_details()
+    record_model_used("model-a", is_fallback=False)
+    record_ai_call(None, model="model-a")
+
+    output = show_run_details(gfm_supported=True)
+
+    assert "Estimated API cost: unavailable (no calls could be priced)" in output
+    assert "Estimated API cost: $0" not in output
+
+
+def test_tiny_positive_cost_is_not_rounded_to_false_zero():
+    get_settings().set("config.output_run_cost", True)
+    init_run_details()
+    record_model_used("model-a", is_fallback=False)
+    record_ai_call(_Usage(1, 1, 2), model="model-a", cost_usd=Decimal("0.00001"))
+
+    output = show_run_details(gfm_supported=True)
+
+    assert "Estimated API cost: <$0.01 USD" in output
+    assert "Estimated API cost: $0.00" not in output
+
+
+class _GfmProvider:
+    def __init__(self, gfm: bool):
+        self.gfm = gfm
+
+    def is_supported(self, capability):
+        return self.gfm and capability == "gfm_markdown"
+
+
+@pytest.fixture
+def run_details_flag():
+    settings = get_settings()
+    previous = settings.config.get("output_run_details", False)
+    yield settings
+    settings.set("config.output_run_details", previous)
+
+
+def test_append_run_details_leaves_body_unchanged_when_disabled(run_details_flag):
+    run_details_flag.set("config.output_run_details", False)
+    init_run_details()
+    record_model_used("openai/gpt-5.4", is_fallback=False)
+
+    assert append_run_details("body", _GfmProvider(gfm=True)) == "body"
+
+
+def test_append_run_details_appends_collapsible_section_with_gfm(run_details_flag):
+    run_details_flag.set("config.output_run_details", True)
+    init_run_details()
+    record_model_used("openai/gpt-5.4", is_fallback=False)
+
+    output = append_run_details("body", _GfmProvider(gfm=True))
+
+    assert output.startswith("body\n<hr>\n<details> <summary><strong>⚙️ Agent run details</strong></summary>")
+    assert "Model: openai/gpt-5.4" in output
+
+
+def test_append_run_details_appends_plain_section_without_gfm(run_details_flag):
+    run_details_flag.set("config.output_run_details", True)
+    init_run_details()
+    record_model_used("openai/gpt-5.4", is_fallback=False)
+
+    output = append_run_details("body", _GfmProvider(gfm=False))
+
+    assert output.startswith("body\n___\n\n**⚙️ Agent run details**")
+    assert "<details>" not in output
+
+
+def test_append_run_details_leaves_body_unchanged_without_a_recorded_model(run_details_flag):
+    run_details_flag.set("config.output_run_details", True)
+    init_run_details()
+
+    assert append_run_details("body", _GfmProvider(gfm=True)) == "body"
+
+
+def test_append_run_details_falls_back_to_plain_text_without_capability_checks(run_details_flag):
+    run_details_flag.set("config.output_run_details", True)
+    init_run_details()
+    record_model_used("openai/gpt-5.4", is_fallback=False)
+
+    output = append_run_details("body", object())
+
+    assert output.startswith("body\n___\n\n**⚙️ Agent run details**")
+    assert "Model: openai/gpt-5.4" in output

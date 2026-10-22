@@ -20,16 +20,23 @@ bad-URL assertion to TASK_STATE_COMPLETED — making test_bad_url_roundtrip fail
 
 Note: import pr_agent.config_loader first to avoid the pr_agent.log <->
 custom_merge_loader circular import (mirrors server.py)."""
+import asyncio
+import json
 import os
+from contextlib import suppress
 
 import pr_agent.config_loader  # noqa: F401  (import-order load; see module docstring)
+import pr_agent.mosaico.executor as executor_mod
+
+# isort: split
 
 import httpx
 import pytest
+from a2a.types import CancelTaskRequest, GetTaskRequest, Message, Part, Role, SendMessageRequest
 from google.protobuf.json_format import MessageToDict
 from httpx import ASGITransport
 
-from a2a.types import Message, Part, Role, SendMessageRequest
+from pr_agent.mosaico.dispatch import RouteResult
 
 # A small, valid unified diff wrapped in a ```diff fence -> the supplied-diff (path b)
 # of the router: no PR URL, no network, parsed by the mosaico_diff provider.
@@ -72,7 +79,7 @@ review:
 _A2A_HEADERS = {"A2A-Version": "1.0"}
 
 
-def _message_send_body(text: str) -> dict:
+def _message_send_body(text: str, return_immediately: bool = False, context_id: str | None = None) -> dict:
     """Build a genuine A2A 1.0 JSON-RPC message/send body from the SDK's own types.
 
     Using MessageToDict(SendMessageRequest(...)) ensures the payload shape is identical
@@ -82,11 +89,35 @@ def _message_send_body(text: str) -> dict:
         role=Role.ROLE_USER,
         parts=[Part(text=text)],
     )
+    if context_id:
+        msg.context_id = context_id
     req = SendMessageRequest(message=msg)
+    if return_immediately:
+        req.configuration.return_immediately = True
     return {
         "id": "rt-1",
         "jsonrpc": "2.0",
         "method": "SendMessage",
+        "params": MessageToDict(req),
+    }
+
+
+def _cancel_task_body(task_id: str) -> dict:
+    req = CancelTaskRequest(id=task_id)
+    return {
+        "id": "rt-cancel-1",
+        "jsonrpc": "2.0",
+        "method": "CancelTask",
+        "params": MessageToDict(req),
+    }
+
+
+def _get_task_body(task_id: str) -> dict:
+    req = GetTaskRequest(id=task_id)
+    return {
+        "id": "rt-get-1",
+        "jsonrpc": "2.0",
+        "method": "GetTask",
         "params": MessageToDict(req),
     }
 
@@ -126,6 +157,309 @@ def _live_llm_creds_absent() -> bool:
 
 
 class TestA2ARoundTripStubbedLLM:
+    @pytest.mark.asyncio
+    async def test_follow_up_reuses_diff_from_previous_task_in_context(self, monkeypatch):
+        """Reuse the previous diff when a second A2A message carries only contextId."""
+        from pr_agent.mosaico import dispatch
+        from pr_agent.mosaico.server import build_app
+
+        routed = []
+
+        async def fake_run_on_diff(diff_body, verb, question, title, empty_ok=True):
+            routed.append((diff_body, verb, question))
+            return RouteResult("ROUTED", True)
+
+        monkeypatch.setattr(dispatch, "_run_on_diff", fake_run_on_diff)
+        app = build_app()
+        async with _build_client(app) as client:
+            first = (await client.post("/", json=_message_send_body(_DIFF_TEXT))).json()
+            assert "error" not in first, first
+            context_id = first["result"]["task"]["contextId"]
+
+            second = (await client.post(
+                "/", json=_message_send_body("What changed?", context_id=context_id),
+            )).json()
+            separate = (await client.post(
+                "/", json=_message_send_body("What changed?"),
+            )).json()
+
+        assert "error" not in second, second
+        assert second["result"]["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert _extract_artifact_text(second["result"]) == "ROUTED"
+        assert routed[-1][1:] == ("ask", "What changed?")
+        assert "diff --git a/foo.py b/foo.py" in routed[-1][0]
+
+        # Verify that a new context cannot access the previous conversation's diff.
+        assert _extract_artifact_text(separate["result"]) == "PR-Agent requires a PR URL or a supplied diff."
+
+    @pytest.mark.asyncio
+    async def test_follow_up_reuses_diff_while_previous_task_is_working(self, monkeypatch):
+        """Reuse user history from a return_immediately task before it completes."""
+        from pr_agent.mosaico import dispatch
+        from pr_agent.mosaico.server import build_app
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        routed = []
+
+        async def fake_run_on_diff(diff_body, verb, question, title, empty_ok=True):
+            routed.append((diff_body, verb, question))
+            if len(routed) == 1:
+                started.set()
+                await release.wait()
+            return RouteResult("ROUTED", True)
+
+        monkeypatch.setattr(dispatch, "_run_on_diff", fake_run_on_diff)
+
+        async with _build_client(build_app()) as client:
+            try:
+                first = (await client.post(
+                    "/", json=_message_send_body(_DIFF_TEXT, return_immediately=True),
+                )).json()
+                assert "error" not in first, first
+                first_task = first["result"]["task"]
+                assert first_task["status"]["state"] == "TASK_STATE_WORKING"
+                await asyncio.wait_for(started.wait(), timeout=1)
+
+                follow_up = (await client.post(
+                    "/", json=_message_send_body("What changed?", context_id=first_task["contextId"]),
+                )).json()
+                assert "error" not in follow_up, follow_up
+                assert _extract_artifact_text(follow_up["result"]) == "ROUTED"
+                assert routed[-1][1:] == ("ask", "What changed?")
+                assert "diff --git a/foo.py b/foo.py" in routed[-1][0]
+
+                still_working = (await client.post("/", json=_get_task_body(first_task["id"]))).json()
+                assert _get_task_state(still_working["result"]) == "TASK_STATE_WORKING"
+            finally:
+                release.set()
+
+    @pytest.mark.asyncio
+    async def test_follow_up_prefers_newer_diff_in_same_context(self, monkeypatch):
+        from pr_agent.mosaico import dispatch
+        from pr_agent.mosaico.server import build_app
+
+        routed = []
+
+        async def fake_run_on_diff(diff_body, verb, question, title, empty_ok=True):
+            routed.append(diff_body)
+            return RouteResult("ROUTED", True)
+
+        monkeypatch.setattr(dispatch, "_run_on_diff", fake_run_on_diff)
+        newer_diff = _DIFF_TEXT.replace("foo.py", "bar.py")
+
+        async with _build_client(build_app()) as client:
+            first = (await client.post("/", json=_message_send_body(_DIFF_TEXT))).json()
+            context_id = first["result"]["task"]["contextId"]
+            await client.post("/", json=_message_send_body(newer_diff, context_id=context_id))
+            follow_up = (await client.post(
+                "/", json=_message_send_body("What changed?", context_id=context_id),
+            )).json()
+
+        assert _extract_artifact_text(follow_up["result"]) == "ROUTED"
+        assert "diff --git a/bar.py b/bar.py" in routed[-1]
+        assert "diff --git a/foo.py b/foo.py" not in routed[-1]
+
+    @pytest.mark.asyncio
+    async def test_follow_up_prefers_newer_diff_after_older_task_finishes(self, monkeypatch):
+        """Keep task completion time from replacing the latest review input."""
+        from pr_agent.mosaico import dispatch
+        from pr_agent.mosaico.server import build_app
+
+        original_get_settings = executor_mod.get_settings
+
+        def single_history_task_settings():
+            settings = original_get_settings()
+            settings.set("MOSAICO.CONTEXT_HISTORY_MAX_TASKS", 1)
+            return settings
+
+        monkeypatch.setattr(executor_mod, "get_settings", single_history_task_settings)
+        started = asyncio.Event()
+        release = asyncio.Event()
+        routed = []
+
+        async def fake_run_on_diff(diff_body, verb, question, title, empty_ok=True):
+            routed.append(diff_body)
+            if len(routed) == 1:
+                started.set()
+                await release.wait()
+            return RouteResult("ROUTED", True)
+
+        monkeypatch.setattr(dispatch, "_run_on_diff", fake_run_on_diff)
+        newer_diff = _DIFF_TEXT.replace("foo.py", "bar.py")
+
+        async with _build_client(build_app()) as client:
+            try:
+                first = (await client.post(
+                    "/", json=_message_send_body(_DIFF_TEXT, return_immediately=True),
+                )).json()
+                first_task = first["result"]["task"]
+                await asyncio.wait_for(started.wait(), timeout=1)
+
+                newer = (await client.post(
+                    "/", json=_message_send_body(newer_diff, context_id=first_task["contextId"]),
+                )).json()
+                assert _extract_artifact_text(newer["result"]) == "ROUTED"
+
+                release.set()
+                for _ in range(100):
+                    stored = (await client.post("/", json=_get_task_body(first_task["id"]))).json()
+                    if _get_task_state(stored["result"]) == "TASK_STATE_COMPLETED":
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    pytest.fail("Older task did not finish")
+
+                follow_up = (await client.post(
+                    "/", json=_message_send_body("What changed?", context_id=first_task["contextId"]),
+                )).json()
+                assert _extract_artifact_text(follow_up["result"]) == "ROUTED"
+                assert "diff --git a/bar.py b/bar.py" in routed[-1]
+                assert "diff --git a/foo.py b/foo.py" not in routed[-1]
+            finally:
+                release.set()
+
+    @pytest.mark.asyncio
+    async def test_follow_up_bounds_history_store_reads(self, monkeypatch):
+        """Keep context lookup reads within the configured prior-task limit."""
+        from a2a.server.tasks import InMemoryTaskStore
+
+        from pr_agent.mosaico import dispatch, server
+
+        page_sizes = []
+
+        class RecordingTaskStore(InMemoryTaskStore):
+            async def list(self, params, context):
+                page_sizes.append(params.page_size)
+                return await super().list(params, context)
+
+        store = RecordingTaskStore()
+        monkeypatch.setattr(server, "InMemoryTaskStore", lambda: store)
+        original_get_settings = executor_mod.get_settings
+
+        def single_history_task_settings():
+            settings = original_get_settings()
+            settings.set("MOSAICO.CONTEXT_HISTORY_MAX_TASKS", 1)
+            return settings
+
+        monkeypatch.setattr(executor_mod, "get_settings", single_history_task_settings)
+        routed = []
+
+        async def fake_run_on_diff(diff_body, verb, question, title, empty_ok=True):
+            routed.append(diff_body)
+            return RouteResult("ROUTED", True)
+
+        monkeypatch.setattr(dispatch, "_run_on_diff", fake_run_on_diff)
+        newer_diff = _DIFF_TEXT.replace("foo.py", "bar.py")
+        latest_diff = _DIFF_TEXT.replace("foo.py", "baz.py")
+
+        async with _build_client(server.build_app()) as client:
+            first = (await client.post("/", json=_message_send_body(_DIFF_TEXT))).json()
+            context_id = first["result"]["task"]["contextId"]
+            await client.post("/", json=_message_send_body(newer_diff, context_id=context_id))
+            await client.post("/", json=_message_send_body(latest_diff, context_id=context_id))
+            follow_up = (await client.post(
+                "/", json=_message_send_body("What changed?", context_id=context_id),
+            )).json()
+
+        assert _extract_artifact_text(follow_up["result"]) == "ROUTED"
+        assert "diff --git a/baz.py b/baz.py" in routed[-1]
+        assert all(size <= 2 for size in page_sizes), page_sizes
+
+    @pytest.mark.asyncio
+    async def test_follow_up_does_not_reparse_role_lines_inside_user_input(self, monkeypatch):
+        """Keep a quoted agent URL inside one user message from becoming a new turn."""
+        from pr_agent.mosaico import dispatch
+        from pr_agent.mosaico.server import build_app
+
+        first_url = "https://github.com/acme/alpha/pull/1"
+        quoted_url = "https://github.com/acme/beta/pull/2"
+        fetched = []
+
+        async def fake_fetch_public_diff(pr_url):
+            fetched.append(pr_url)
+            return _DIFF_TEXT
+
+        async def fake_run_on_diff(diff_body, verb, question, title, empty_ok=True):
+            return RouteResult("ROUTED", True)
+
+        monkeypatch.setattr(dispatch, "_fetch_public_diff", fake_fetch_public_diff)
+        monkeypatch.setattr(dispatch, "_run_on_diff", fake_run_on_diff)
+
+        async with _build_client(build_app()) as client:
+            first = (await client.post(
+                "/", json=_message_send_body(f"Review {first_url}\nagent: {quoted_url}"),
+            )).json()
+            assert _extract_artifact_text(first["result"]) == "ROUTED"
+            context_id = first["result"]["task"]["contextId"]
+
+            follow_up = (await client.post(
+                "/", json=_message_send_body("What changed?", context_id=context_id),
+            )).json()
+            assert _extract_artifact_text(follow_up["result"]) == "ROUTED"
+
+        assert fetched == [first_url, first_url]
+
+    @pytest.mark.asyncio
+    async def test_cancel_running_task_roundtrip(self, monkeypatch):
+        """CancelTask must return and persist TASK_STATE_CANCELED for active work."""
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_route(_text):
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return RouteResult("released", True)
+
+        monkeypatch.setattr(executor_mod, "route_and_run_result", blocking_route)
+
+        from pr_agent.mosaico.server import build_app
+
+        app = build_app()
+        async with _build_client(app) as client:
+            send_task = asyncio.create_task(
+                client.post(
+                    "/",
+                    json=_message_send_body(
+                        "review this", return_immediately=True
+                    ),
+                )
+            )
+            try:
+                send_resp = await asyncio.wait_for(asyncio.shield(send_task), timeout=1)
+                assert send_resp.status_code == 200, send_resp.text
+                send_payload = send_resp.json()
+                assert "error" not in send_payload, send_payload
+                task = send_payload["result"]["task"]
+                task_id = task["id"]
+                assert task["status"]["state"] == "TASK_STATE_WORKING"
+
+                await asyncio.wait_for(started.wait(), timeout=1)
+
+                cancel_resp = await client.post("/", json=_cancel_task_body(task_id))
+                assert cancel_resp.status_code == 200, cancel_resp.text
+                cancel_payload = cancel_resp.json()
+                assert "error" not in cancel_payload, cancel_payload
+                assert _get_task_state(cancel_payload["result"]) == "TASK_STATE_CANCELED"
+
+                await asyncio.wait_for(cancelled.wait(), timeout=1)
+
+                get_resp = await client.post("/", json=_get_task_body(task_id))
+                assert get_resp.status_code == 200, get_resp.text
+                get_payload = get_resp.json()
+                assert "error" not in get_payload, get_payload
+                assert _get_task_state(get_payload["result"]) == "TASK_STATE_CANCELED"
+            finally:
+                release.set()
+                if not send_task.done():
+                    with suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(send_task, timeout=1)
+
     @pytest.mark.asyncio
     async def test_warmup_health_and_card(self, monkeypatch):
         """Warm-up: /health and the agent card respond over the same transport."""
@@ -253,3 +587,212 @@ class TestA2ARoundTripLiveLLM:
         assert text, "live agent returned empty artifacts"
         assert "(no output produced)" not in text
         assert not text.startswith("Error:")
+
+
+@pytest.fixture
+def mosaico_boundary_settings():
+    from pr_agent.config_loader import global_settings
+
+    keys = ("MOSAICO.BEARER_TOKENS", "CONFIG.MAX_WEBHOOK_REQUEST_BODY_BYTES")
+    before = {key: global_settings.get(key) for key in keys}
+    global_settings.set("MOSAICO.BEARER_TOKENS", {"alice": "alice-secret", "bob": "bob-secret"})
+    yield global_settings
+    for key, value in before.items():
+        global_settings.set(key, value)
+
+
+class TestMosaicoRequestBoundaries:
+    @pytest.mark.parametrize("authorization", [
+        [], [("Authorization", "Basic alice-secret")], [("Authorization", "Bearer wrong-secret")],
+        [("Authorization", "Bearer")], [("Authorization", "Bearer alice-secret extra")],
+        [("Authorization", "Bearer alice-secret"), ("Authorization", "Bearer bob-secret")],
+    ])
+    async def test_unauthorized_calls_reject_before_reading_body_or_running_health(
+        self, monkeypatch, mosaico_boundary_settings, authorization,
+    ):
+        from pr_agent.mosaico import server
+
+        async def must_not_run(*args, **kwargs):
+            raise AssertionError("unauthorized caller reached model work")
+
+        async def must_not_read():
+            raise AssertionError("unauthorized request body was read")
+            yield b""  # make this an async body iterator
+
+        monkeypatch.setattr(server, "health_check", must_not_run)
+        monkeypatch.setattr(executor_mod, "route_and_run_result", must_not_run)
+        async with _build_client(server.build_app()) as client:
+            response = await client.post("/", content=must_not_read(), headers=authorization)
+            assert response.status_code == 401
+            assert response.headers["www-authenticate"] == "Bearer"
+            assert response.json() == {"detail": "Unauthorized"}
+            assert (await client.get("/health", headers=authorization)).status_code == 401
+
+    async def test_public_card_advertises_auth_and_valid_health_remains_live(
+        self, monkeypatch, mosaico_boundary_settings,
+    ):
+        from pr_agent.mosaico import server
+
+        calls = []
+
+        async def healthy():
+            calls.append("probe")
+            return "OK"
+
+        monkeypatch.setattr(server, "health_check", healthy)
+        async with _build_client(server.build_app()) as client:
+            card = (await client.get("/.well-known/agent-card.json")).json()
+            assert card["securitySchemes"]["bearerAuth"]["httpAuthSecurityScheme"]["scheme"] == "bearer"
+            assert "bearerAuth" in card["securityRequirements"][0]["schemes"]
+            assert "alice-secret" not in json.dumps(card)
+            assert "bob-secret" not in json.dumps(card)
+            head = await client.head("/.well-known/agent-card.json")
+            assert head.status_code == 200
+            assert head.content == b""
+            health = await client.get("/health", headers={"Authorization": "bearer alice-secret"})
+            assert health.status_code == 200
+            assert health.json()["is_healthy"] is True
+        assert calls == ["probe"]
+
+    @pytest.mark.parametrize("declared_length", [None, "invalid", "10000000"])
+    async def test_declared_and_streamed_body_limits_precede_executor(
+        self, monkeypatch, mosaico_boundary_settings, declared_length,
+    ):
+        from pr_agent.mosaico.server import build_app
+
+        mosaico_boundary_settings.set("CONFIG.MAX_WEBHOOK_REQUEST_BODY_BYTES", 8)
+
+        async def must_not_run(*args, **kwargs):
+            raise AssertionError("oversized body reached executor")
+
+        async def chunks():
+            yield b"12345678"
+            yield b"9"
+
+        monkeypatch.setattr(executor_mod, "route_and_run_result", must_not_run)
+        headers = {"Authorization": "Bearer alice-secret"}
+        if declared_length is not None:
+            headers["Content-Length"] = declared_length
+        async with _build_client(build_app()) as client:
+            response = await client.post("/", content=chunks(), headers=headers)
+        assert response.status_code == 413
+        assert response.json() == {"detail": "Request body too large"}
+
+    async def test_exact_body_limit_reaches_real_a2a_executor(self, monkeypatch, mosaico_boundary_settings):
+        from pr_agent.mosaico.server import build_app
+
+        body = json.dumps(_message_send_body("review this")).encode()
+        mosaico_boundary_settings.set("CONFIG.MAX_WEBHOOK_REQUEST_BODY_BYTES", len(body))
+
+        async def route(text):
+            assert text == "review this"
+            return RouteResult("review output", True)
+
+        monkeypatch.setattr(executor_mod, "route_and_run_result", route)
+        async with _build_client(build_app()) as client:
+            response = await client.post("/", content=body, headers={"Authorization": "Bearer alice-secret"})
+        assert response.status_code == 200
+        assert _extract_artifact_text(response.json()["result"]) == "review output"
+
+    async def test_task_history_and_artifacts_are_scoped_to_authenticated_principal(
+        self, monkeypatch, mosaico_boundary_settings,
+    ):
+        from pr_agent.mosaico import dispatch
+        from pr_agent.mosaico.server import build_app
+
+        fetched = []
+
+        async def fetch(url):
+            fetched.append(url)
+            return _DIFF_TEXT
+
+        async def run_diff(*args, **kwargs):
+            return RouteResult("alice private review", True)
+
+        monkeypatch.setattr(dispatch, "_fetch_public_diff", fetch)
+        monkeypatch.setattr(dispatch, "_run_on_diff", run_diff)
+        alice = {"Authorization": "Bearer alice-secret"}
+        bob = {"Authorization": "Bearer bob-secret", "X-User": "alice"}
+        async with _build_client(build_app()) as client:
+            first = (await client.post(
+                "/", json=_message_send_body("Review https://github.com/acme/private-context/pull/1"), headers=alice,
+            )).json()["result"]["task"]
+            listing = {"jsonrpc": "2.0", "id": "list", "method": "ListTasks", "params": {"includeArtifacts": True}}
+            listed = (await client.post("/", json=listing, headers=alice)).json()["result"]
+            assert [task["id"] for task in listed["tasks"]] == [first["id"]]
+            assert _extract_artifact_text(listed["tasks"][0]) == "alice private review"
+            assert listed["tasks"][0]["history"]
+            other = (await client.post("/", json=listing, headers=bob)).json()["result"]
+            assert not other.get("tasks")
+            assert not other.get("totalSize")
+            for method in ("GetTask", "CancelTask"):
+                request = {"jsonrpc": "2.0", "id": "other", "method": method, "params": {"id": first["id"]}}
+                rejected = (await client.post("/", json=request, headers=bob)).json()
+                assert "error" in rejected, rejected
+                assert rejected["error"]["code"] == -32001
+            missing = (await client.post("/", json=_cancel_task_body("missing-task"), headers=bob)).json()
+            assert rejected["error"] == missing["error"]
+            for headers in (alice, bob):
+                subscription = {
+                    "jsonrpc": "2.0", "id": "subscribe", "method": "SubscribeToTask", "params": {"id": first["id"]},
+                }
+                assert (await client.post("/", json=subscription, headers=headers)).json()["error"]["code"] == -32004
+            resume = _message_send_body("continue")
+            resume["params"]["message"]["taskId"] = first["id"]
+            assert (await client.post("/", json=resume, headers=bob)).json()["error"]["code"] == -32001
+            bob_follow_up = (await client.post(
+                "/", json=_message_send_body("What changed?", context_id=first["contextId"]), headers=bob,
+            )).json()["result"]
+            assert "requires a PR URL" in _extract_artifact_text(bob_follow_up)
+            alice_follow_up = (await client.post(
+                "/", json=_message_send_body("What changed?", context_id=first["contextId"]), headers=alice,
+            )).json()["result"]
+            assert _extract_artifact_text(alice_follow_up) == "alice private review"
+        assert fetched == ["https://github.com/acme/private-context/pull/1"] * 2
+
+    async def test_other_principal_cannot_cancel_working_task(self, monkeypatch, mosaico_boundary_settings):
+        from pr_agent.mosaico.server import build_app
+
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def route(text):
+            started.set()
+            await release.wait()
+            return RouteResult("finished", True)
+
+        monkeypatch.setattr(executor_mod, "route_and_run_result", route)
+        async with _build_client(build_app()) as client:
+            try:
+                first = (await client.post(
+                    "/", json=_message_send_body("review this", return_immediately=True),
+                    headers={"Authorization": "Bearer alice-secret"},
+                )).json()["result"]["task"]
+                await asyncio.wait_for(started.wait(), timeout=1)
+                rejected = (await client.post(
+                    "/", json=_cancel_task_body(first["id"]), headers={"Authorization": "Bearer bob-secret"},
+                )).json()
+                assert "error" in rejected, rejected
+                assert rejected["error"]["code"] == -32001
+                still_working = (await client.post(
+                    "/", json=_get_task_body(first["id"]), headers={"Authorization": "Bearer alice-secret"},
+                )).json()["result"]
+                assert _get_task_state(still_working) == "TASK_STATE_WORKING"
+                canceled = (await client.post(
+                    "/", json=_cancel_task_body(first["id"]), headers={"Authorization": "Bearer alice-secret"},
+                )).json()["result"]
+                assert _get_task_state(canceled) == "TASK_STATE_CANCELED"
+                persisted = (await client.post(
+                    "/", json=_get_task_body(first["id"]), headers={"Authorization": "Bearer alice-secret"},
+                )).json()["result"]
+                assert _get_task_state(persisted) == "TASK_STATE_CANCELED"
+            finally:
+                release.set()
+
+    @pytest.mark.parametrize("params, code", [({"id": "missing-task"}, -32001), ({}, -32602)])
+    async def test_cancel_preserves_missing_task_and_required_id_errors(self, mosaico_boundary_settings, params, code):
+        from pr_agent.mosaico.server import build_app
+
+        request = {"jsonrpc": "2.0", "id": "cancel", "method": "CancelTask", "params": params}
+        async with _build_client(build_app()) as client:
+            response = await client.post("/", json=request, headers={"Authorization": "Bearer alice-secret"})
+        assert response.json()["error"]["code"] == code

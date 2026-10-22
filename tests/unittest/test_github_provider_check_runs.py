@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+from requests.exceptions import RequestException
+
 from pr_agent.git_providers.github_provider import GithubProvider
 
 
@@ -32,6 +34,9 @@ def _make_provider(last_commit_sha="deadbeef", requester=None):
     p.pr = SimpleNamespace(_requester=requester or _FakeRequester())
     p.last_commit_id = SimpleNamespace(sha=last_commit_sha) if last_commit_sha else None
     p._check_run_ids = {}
+    p._check_runs_in_progress = set()
+    p._check_run_base_summaries = {}
+    p._check_runs_progress_blocked = set()
     return p
 
 
@@ -70,7 +75,7 @@ def test_publish_check_run_returns_false_on_post_failure():
     requester.set_exception(
         "POST",
         f"{provider.base_url}/repos/{provider.repo}/check-runs",
-        RuntimeError("API error"),
+        RequestException("API error"),
     )
 
     result = provider._publish_check_run("some output", "review")
@@ -166,7 +171,7 @@ def test_publish_check_run_falls_back_to_create_on_patch_failure():
     requester.set_exception(
         "PATCH",
         f"{provider.base_url}/repos/{provider.repo}/check-runs/42",
-        RuntimeError("Update failed"),
+        RequestException("Update failed"),
     )
     requester.set_response(
         "POST",
@@ -204,6 +209,28 @@ def test_find_existing_check_run_returns_id_on_match():
     result = provider._find_existing_check_run("PR Agent - Review", "deadbeef")
 
     assert result == 1
+    assert requester.calls[0][2] == {"parameters": {"check_name": "PR Agent - Review"}}
+
+
+def test_find_existing_check_run_follows_filtered_pagination_url():
+    requester = _FakeRequester()
+    provider = _make_provider(requester=requester)
+    first_url = f"{provider.base_url}/repos/{provider.repo}/commits/deadbeef/check-runs"
+    next_url = first_url + "?check_name=PR+Agent+-+Review&page=2"
+    requester.set_response(
+        "GET", first_url,
+        ({"Link": f'<{next_url}>; rel="next"'}, {"check_runs": []}),
+    )
+    requester.set_response(
+        "GET", next_url,
+        ({}, {"check_runs": [{"id": 42, "name": "PR Agent - Review"}]}),
+    )
+
+    assert provider._find_existing_check_run("PR Agent - Review", "deadbeef") == 42
+    assert requester.calls == [
+        ("GET", first_url, {"parameters": {"check_name": "PR Agent - Review"}}),
+        ("GET", next_url, {"parameters": None}),
+    ]
 
 
 def test_find_existing_check_run_returns_none_on_no_match():
@@ -233,7 +260,7 @@ def test_find_existing_check_run_returns_none_on_api_error():
     requester.set_exception(
         "GET",
         f"{provider.base_url}/repos/{provider.repo}/commits/deadbeef/check-runs",
-        RuntimeError("API error"),
+        RequestException("API error"),
     )
 
     result = provider._find_existing_check_run("PR Agent - Review", "deadbeef")
