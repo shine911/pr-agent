@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -3104,3 +3105,129 @@ def test_get_issue_comments_newest_first_returns_notes_newest_first():
     provider.mr.notes.list.return_value = ["newest", "middle", "oldest"]
 
     assert provider.get_issue_comments_newest_first() == ["newest", "middle", "oldest"]
+
+
+class TestGitLabCodeOwners:
+    def _provider(self):
+        provider = GitLabProvider.__new__(GitLabProvider)
+        provider.mr = MagicMock()
+        provider.gl = MagicMock()
+        provider.id_mr = 1
+        provider.max_comment_chars = 65000
+        return provider
+
+    def test_codeowners_is_read_from_target_branch_in_priority_order(self):
+        provider = self._provider()
+        provider.mr.target_branch = "main"
+        provider.get_pr_file_content = MagicMock(side_effect=["", "", "*.py @alice"])
+
+        assert provider.get_codeowners_content() == "*.py @alice"
+        assert [call.args[0] for call in provider.get_pr_file_content.call_args_list] == [
+            "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS",
+        ]
+
+    def test_missing_codeowners_returns_empty_string(self):
+        provider = self._provider()
+        provider.mr.target_branch = "main"
+        provider.get_pr_file_content = MagicMock(return_value="")
+
+        assert provider.get_codeowners_content() == ""
+
+    @pytest.mark.parametrize("approved_by", [
+        [{"user": {"username": "Alice"}}, {"user": {"username": "bob"}}],
+        [{"username": "Alice"}, {"username": "bob"}],
+    ])
+    def test_approvers_accept_nested_and_flat_user_shapes(self, approved_by):
+        provider = self._provider()
+        provider.mr.approvals.get.return_value = SimpleNamespace(approved_by=approved_by)
+
+        assert provider.get_codeowner_approvers() == {"alice", "bob"}
+
+    def test_approvers_return_none_when_gitlab_fails(self):
+        provider = self._provider()
+        provider.mr.approvals.get.side_effect = GitlabError("boom")
+
+        assert provider.get_codeowner_approvers() is None
+
+    def test_group_direct_members_are_lowercased(self):
+        provider = self._provider()
+        provider.gl.groups.get.return_value.members.list.return_value = [
+            SimpleNamespace(username="Carol"), SimpleNamespace(username="dave"),
+        ]
+
+        assert provider.get_group_member_usernames("ops/platform") == {"carol", "dave"}
+        provider.gl.groups.get.assert_called_once_with("ops/platform", lazy=True)
+
+    def test_role_members_are_filtered_by_exact_access_level(self):
+        provider = self._provider()
+        provider.id_project = "group/project"
+        provider.gl.projects.get.return_value.members.list.return_value = [
+            SimpleNamespace(username="Maya", access_level=40),
+            SimpleNamespace(username="ops", access_level=50),
+            SimpleNamespace(username="dev", access_level=30),
+        ]
+
+        assert provider.get_role_member_usernames(40) == {"maya"}
+
+    def test_user_path_that_is_not_a_group_returns_none(self):
+        provider = self._provider()
+        provider.gl.groups.get.side_effect = GitlabGetError("404", response_code=404)
+
+        assert provider.get_group_member_usernames("alice") is None
+
+    def test_find_codeowners_thread_matches_marker_in_first_note(self):
+        provider = self._provider()
+        discussion = SimpleNamespace(attributes={"notes": [{"body": "text <!-- pr-agent:codeowners key=abc -->"}]})
+        provider.mr.discussions.list.return_value = [discussion]
+
+        assert provider.find_codeowners_thread("pr-agent:codeowners key=abc") is True
+        assert provider.find_codeowners_thread("pr-agent:codeowners key=zzz") is False
+
+    def test_publish_codeowners_thread_creates_discussion(self):
+        provider = self._provider()
+
+        provider.publish_codeowners_thread("hello @alice")
+
+        provider.mr.discussions.create.assert_called_once_with({"body": "hello @alice"})
+
+
+class TestGitLabCodeOwnersHardening:
+    def _provider(self):
+        provider = GitLabProvider.__new__(GitLabProvider)
+        provider.mr = MagicMock()
+        provider.gl = MagicMock()
+        provider.id_mr = 1
+        provider.max_comment_chars = 65000
+        return provider
+
+    def test_codeowners_read_errors_are_propagated_not_treated_as_missing(self):
+        provider = self._provider()
+        provider.mr.target_branch = "main"
+        provider.get_pr_file_content = MagicMock(return_value="")
+
+        provider.get_codeowners_content()
+
+        for call in provider.get_pr_file_content.call_args_list:
+            assert call.kwargs.get("propagate_errors") is True
+
+    def test_author_approval_is_not_counted(self):
+        provider = self._provider()
+        provider.mr.author = {"username": "Alice"}
+        provider.mr.approvals.get.return_value = SimpleNamespace(
+            approved_by=[{"user": {"username": "alice"}}, {"user": {"username": "bob"}}])
+
+        assert provider.get_codeowner_approvers() == {"bob"}
+
+    def test_resolved_codeowners_thread_does_not_count_as_existing(self):
+        provider = self._provider()
+        resolved = SimpleNamespace(attributes={"notes": [
+            {"body": "text <!-- pr-agent:codeowners key=abc -->", "resolved": True}]})
+        provider.mr.discussions.list.return_value = [resolved]
+
+        assert provider.find_codeowners_thread("pr-agent:codeowners key=abc") is False
+
+    def test_find_codeowners_thread_returns_none_when_discussions_cannot_be_listed(self):
+        provider = self._provider()
+        provider.mr.discussions.list.side_effect = GitlabError("boom")
+
+        assert provider.find_codeowners_thread("pr-agent:codeowners key=abc") is None

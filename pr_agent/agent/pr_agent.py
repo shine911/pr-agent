@@ -32,6 +32,7 @@ from pr_agent.telemetry.shutdown import flush_telemetry
 from pr_agent.telemetry.tracer import get_tracer
 from pr_agent.tools.pr_add_docs import PRAddDocs
 from pr_agent.tools.pr_code_suggestions import PRCodeSuggestions
+from pr_agent.tools.pr_codeowners import PRCodeOwners
 from pr_agent.tools.pr_config import PRConfig
 from pr_agent.tools.pr_description import PRDescription
 from pr_agent.tools.pr_generate_labels import PRGenerateLabels
@@ -66,6 +67,7 @@ command2class = {
     "similar_issue": PRSimilarIssue,
     "add_docs": PRAddDocs,
     "generate_labels": PRGenerateLabels,
+    "codeowners": PRCodeOwners,
     # SECURITY: "/help_docs" is temporarily disabled while the clone-target validation
     # fix is reviewed (see issue #2445). Re-enable by restoring `"help_docs": PRHelpDocs`
     # and its import once the hardening PR is merged.

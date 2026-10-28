@@ -24,6 +24,7 @@ from requests.exceptions import RequestException
 from pr_agent.agent.request_policy import policy_metadata, policy_value
 from pr_agent.algo.types import EDIT_TYPE, FilePatchInfo
 
+from ..algo.codeowners import CODEOWNERS_FILE_PATHS
 from ..algo.comment_identity import (
     PRCodeSuggestionsHeader,
     PRCodeSuggestionsIdentity,
@@ -2698,6 +2699,90 @@ class GitLabProvider(GitProvider):
             get_logger().error(f"Failed to auto-unapprove MR {self.id_mr}: {e}")
         except Exception as e:
             get_logger().error(f"Failed to auto-unapprove MR {self.id_mr}: {e}")
+
+    def get_codeowners_content(self) -> str:
+        """Return the CODEOWNERS file from the target branch, or '' when none exists.
+
+        The target branch is used because a merge request must not be able to change its own owners. Read errors
+        other than 404 are raised, so an unreadable file is never mistaken for a missing one.
+        """
+        ref = getattr(self.mr, "target_branch", None) or self._project_default_branch()
+        for path in CODEOWNERS_FILE_PATHS:
+            content = self.get_pr_file_content(path, ref, propagate_errors=True)
+            if content:
+                return content
+        return ""
+
+    def get_codeowner_approvers(self) -> set[str] | None:
+        """Return lowercase usernames that approved the merge request, or None when GitLab cannot be read.
+
+        The author's own approval is dropped. GitLab does not count it when approval by the author is prevented,
+        and the project setting cannot be read on the Free tier, so the author is never counted.
+        """
+        try:
+            approvals = self.mr.approvals.get()
+        except (GitlabError, RequestException) as e:
+            get_logger().warning(f"Failed to read approvals of merge request {self.id_mr}: {e}")
+            return None
+        author = getattr(self.mr, "author", None)
+        author_name = author.get("username", "").lower() if isinstance(author, dict) else ""
+        approvers = set()
+        for entry in getattr(approvals, "approved_by", None) or []:
+            username = (entry.get("user") or entry).get("username", "").lower()
+            if username and username != author_name:
+                approvers.add(username)
+        return approvers
+
+    def get_group_member_usernames(self, group_path: str) -> set[str] | None:
+        """Return lowercase usernames of a group's direct members, or None when the path is not a readable group.
+
+        CODEOWNERS counts only direct members, so inherited members are not listed.
+        """
+        try:
+            members = self.gl.groups.get(group_path, lazy=True).members.list(get_all=True)
+        except GitlabError as e:
+            # A user owner is not a group, so GitLab answers 404 for it. That is expected, not a failure.
+            if getattr(e, "response_code", None) == 404:
+                get_logger().debug(f"'{group_path}' is not a readable group: {e}")
+            else:
+                get_logger().warning(f"Failed to list members of group '{group_path}': {e}")
+            return None
+        except RequestException as e:
+            get_logger().warning(f"Failed to list members of group '{group_path}': {e}")
+            return None
+        return {member.username.lower() for member in members}
+
+    def get_role_member_usernames(self, access_level: int) -> set[str] | None:
+        """Return lowercase usernames of direct project members with exactly this access level, or None on error."""
+        try:
+            members = self.gl.projects.get(self.id_project, lazy=True).members.list(get_all=True)
+        except (GitlabError, RequestException) as e:
+            get_logger().warning(f"Failed to list members of project {self.id_project}: {e}")
+            return None
+        return {member.username.lower() for member in members if member.access_level == access_level}
+
+    def find_codeowners_thread(self, marker: str) -> bool | None:
+        """Return True when an unresolved discussion carries the marker in its first note, False when none does.
+
+        A resolved thread does not count, so a pending owner approval gets a new thread after the team closed the
+        previous one.
+        Returns None when the discussions cannot be listed. The caller must not publish then, because it cannot
+        tell whether an open thread already exists.
+        """
+        try:
+            discussions = self.mr.discussions.list(get_all=True)
+        except (GitlabError, RequestException) as e:
+            get_logger().warning(f"Failed to list discussions of merge request {self.id_mr}: {e}")
+            return None
+        for discussion in discussions:
+            notes = discussion.attributes.get('notes') or []
+            if notes and marker in (notes[0].get('body') or '') and not notes[0].get('resolved'):
+                return True
+        return False
+
+    def publish_codeowners_thread(self, body: str) -> None:
+        """Open a discussion that stays unresolved until a code owner reviews the merge request."""
+        self.mr.discussions.create({'body': self.limit_output_characters(body, self.max_comment_chars)})
 
     def get_user_id(self):
         return None

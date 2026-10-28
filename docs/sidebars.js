@@ -53,6 +53,7 @@ const sidebars = {
         {type: 'doc', id: 'usage-guide/automations_and_usage', label: 'Usage and automation'},
         {type: 'doc', id: 'usage-guide/push_outputs', label: 'Push outputs'},
         {type: 'doc', id: 'usage-guide/mail_notifications', label: 'Mail notifications'},
+        {type: 'doc', id: 'usage-guide/codeowners', label: 'CODEOWNERS check'},
       ],
     },
     {
