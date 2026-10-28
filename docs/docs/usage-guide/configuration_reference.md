@@ -593,6 +593,13 @@ _This section only documents commented-out examples; see the [TOML source](https
 | `agent_identity` | "" | empty: discover the identity from earlier agent comments on the PR |
 
 
+## `[codeowners]` — /codeowners {#codeowners-codeowners}
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enable_codeowners_check` | false | when true, /codeowners opens an unresolved merge request thread that mentions CODEOWNERS owners whose approval is missing for changed files (GitLab; reads CODEOWNERS from the target branch) |
+
+
 ## `[push_outputs]` — push tool outputs to external sinks without calling git-provider APIs (disabled by default) {#push_outputs-push tool outputs to external sinks without calling git-provider APIs (disabled by default)}
 
 | Key | Default | Description |

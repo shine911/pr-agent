@@ -71,6 +71,7 @@ _NON_MARKDOWN_COMMANDS = [
     "similar_issue",
     "add_docs",
     "generate_labels",
+    "codeowners",
 ]
 
 
