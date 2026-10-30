@@ -305,7 +305,7 @@ verify the status-changing actor or historical defaults. Dismissed findings shar
 | Key | Default | Description |
 | --- | --- | --- |
 | `extra_instructions` | "" | review rules applied to every file |
-| `rules` | [] | optional path-scoped rules, in priority order: [[ocr_review.rules]] path = "<glob>" rule = "<text>" |
+| `rules` | [] | optional path-scoped rules, in priority order: [[ocr_review.rules]] with path = "GLOB" and rule = "TEXT" |
 | `language` | "" | OCR review language name (e.g. "Vietnamese"); empty = derived from config.response_language |
 | `llm_protocol` | "openai-responses" | OCR LLM protocol: "openai-responses", "openai" or "anthropic" |
 | `fail_on_severity` | "" | fail the OCR job when a finding is at/above this severity: critical, high, medium, low; empty = never |

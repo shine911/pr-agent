@@ -63,7 +63,7 @@ rule = "Migrations must be reversible and must not lock large tables."
 | `OCR_RULE_FILE` | absolute path of `.ocr/rule.json`, empty when no rules are configured |
 
 :::note
-Only OpenAI models are supported. A model that is not an OpenAI model name (for example `anthropic/...` or any other provider prefix) makes the command fail with an error.
+Only OpenAI models are supported. A model name with a provider prefix other than `openai/` (for example `anthropic/...`), or an empty model, makes the command fail with an error. A name without a prefix is passed through unchanged, so make sure it is a model your OpenAI-compatible endpoint serves. `llm_protocol` is validated too: an empty value falls back to `openai-responses`, the check is case-insensitive, and any value other than `openai-responses`, `openai` or `anthropic` makes the command fail.
 :::
 
 ### How rules are combined

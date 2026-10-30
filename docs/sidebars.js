@@ -88,7 +88,6 @@ const sidebars = {
         {type: 'doc', id: 'tools/describe', label: 'Describe'},
         {type: 'doc', id: 'tools/review', label: 'Review'},
         {type: 'doc', id: 'tools/improve', label: 'Improve'},
-        {type: 'doc', id: 'tools/ocr_config', label: 'OCR config'},
         {type: 'doc', id: 'tools/ask', label: 'Ask'},
       ],
     },
@@ -101,6 +100,7 @@ const sidebars = {
         {type: 'doc', id: 'tools/generate_labels', label: 'Generate labels'},
         {type: 'doc', id: 'tools/update_changelog', label: 'Update changelog'},
         {type: 'doc', id: 'tools/similar_issues', label: 'Similar issues'},
+        {type: 'doc', id: 'tools/ocr_config', label: 'OCR config'},
       ],
     },
     {
