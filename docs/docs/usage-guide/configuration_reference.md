@@ -300,6 +300,17 @@ verify the status-changing actor or historical defaults. Dismissed findings shar
 | `fold_suggestions_on_self_review` | true | no effect: the self-review checkbox is a visual marker only, and suggestions are not folded when it is ticked |
 
 
+## `[ocr_review]` — ocr_config: settings handed to open-code-review (OCR) in the GitLab pipeline {#ocr_review-ocr_config: settings handed to open-code-review (OCR) in the GitLab pipeline}
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `extra_instructions` | "" | review rules applied to every file |
+| `rules` | [] | optional path-scoped rules, in priority order: [[ocr_review.rules]] path = "<glob>" rule = "<text>" |
+| `language` | "" | OCR review language name (e.g. "Vietnamese"); empty = derived from config.response_language |
+| `llm_protocol` | "openai-responses" | OCR LLM protocol: "openai-responses", "openai" or "anthropic" |
+| `fail_on_severity` | "" | fail the OCR job when a finding is at/above this severity: critical, high, medium, low; empty = never |
+
+
 ## `[pr_add_docs]` — /add_docs {#pr_add_docs-add_docs}
 
 | Key | Default | Description |

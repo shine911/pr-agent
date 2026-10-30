@@ -27,6 +27,13 @@ PR_AGENT_SOURCE = ROOT / "pr_agent"
 # Keys read through a settings section stored in a local variable, so the
 # static dotted-path scan cannot see them. Each entry documents the reader.
 _ALLOWLIST = {
+    # [ocr_review] keys are read by the ocr_config command added in the following commits; remove these
+    # entries once the reader lands (the stale-entry check below fails until then).
+    ("ocr_review", "extra_instructions"): "read by the ocr_config command (pending)",
+    ("ocr_review", "rules"): "read by the ocr_config command (pending)",
+    ("ocr_review", "language"): "read by the ocr_config command (pending)",
+    ("ocr_review", "llm_protocol"): "read by the ocr_config command (pending)",
+    ("ocr_review", "fail_on_severity"): "read by the ocr_config command (pending)",
     # [model_cost] holds per-model price overrides, read as a whole mapping by
     # get_settings().get("model_cost") in pr_agent/algo/model_cost.py (the keys are model names).
     ("model_cost", "gpt-5.6-luna"): "get_settings().get('model_cost') in pr_agent/algo/model_cost.py",
