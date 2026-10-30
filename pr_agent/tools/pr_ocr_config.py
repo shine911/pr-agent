@@ -11,6 +11,7 @@ from pr_agent.algo.ocr_config import (
     render_ocr_env,
     resolve_ocr_language,
     resolve_ocr_model,
+    resolve_ocr_protocol,
     resolve_ocr_url,
     validate_fail_on_severity,
 )
@@ -46,7 +47,7 @@ class PROcrConfig:
             env_values = {
                 "OCR_LLM_URL": resolve_ocr_url(settings.get("openai.api_base", None)),
                 "OCR_LLM_MODEL": resolve_ocr_model(settings.get("config.model", None)),
-                "OCR_LLM_PROTOCOL": (settings.ocr_review.get("llm_protocol", "") or "").strip(),
+                "OCR_LLM_PROTOCOL": resolve_ocr_protocol(settings.ocr_review.get("llm_protocol", "")),
                 "OCR_LANGUAGE": resolve_ocr_language(
                     settings.ocr_review.get("language", ""), settings.get("config.response_language", "")),
                 "OCR_FAIL_ON_SEVERITY": validate_fail_on_severity(

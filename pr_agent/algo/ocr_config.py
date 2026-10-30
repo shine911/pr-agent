@@ -18,7 +18,9 @@ _LANGUAGE_NAMES = {
     "de": "German", "es": "Spanish", "pt": "Portuguese", "ru": "Russian", "it": "Italian"}
 _DEFAULT_LANGUAGE = "English"
 _SEVERITIES = ("critical", "high", "medium", "low")
-_ENV_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+DEFAULT_OCR_LLM_PROTOCOL = "openai-responses"
+_OCR_PROTOCOLS = ("openai-responses", "openai", "anthropic")
+_ENV_KEY_RE = re.compile(r"[A-Z_][A-Z0-9_]*")
 
 
 class OcrConfigError(ValueError):
@@ -38,6 +40,14 @@ def resolve_ocr_model(model: str | None) -> str:
 def resolve_ocr_url(api_base: str | None) -> str:
     value = (api_base or "").strip()
     return value.rstrip("/") if value else DEFAULT_OCR_LLM_URL
+
+
+def resolve_ocr_protocol(value: str | None) -> str:
+    protocol = (value or "").strip().lower() or DEFAULT_OCR_LLM_PROTOCOL
+    if protocol not in _OCR_PROTOCOLS:
+        raise OcrConfigError(
+            f"llm_protocol {value!r} is not supported by OCR: use one of {', '.join(_OCR_PROTOCOLS)}.")
+    return protocol
 
 
 def resolve_ocr_language(language: str | None, response_language: str | None) -> str:
@@ -83,7 +93,7 @@ def build_ocr_rules(extra_instructions: str | None, rules: object) -> dict | Non
 def render_ocr_env(values: Mapping[str, str]) -> str:
     lines = []
     for key, value in values.items():
-        if not _ENV_KEY_RE.match(key):
+        if not _ENV_KEY_RE.fullmatch(key):
             raise OcrConfigError(f"Invalid environment variable name {key!r}.")
         lines.append(f"export {key}={shlex.quote(str(value))}")
     return "\n".join(lines) + "\n"

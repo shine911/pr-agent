@@ -1,7 +1,7 @@
 import subprocess
 
 import pytest
-from dynaconf.utils.boxing import DynaBox
+from dynaconf import DataDict
 
 from pr_agent.algo.ocr_config import (
     DEFAULT_OCR_LLM_URL,
@@ -10,6 +10,7 @@ from pr_agent.algo.ocr_config import (
     render_ocr_env,
     resolve_ocr_language,
     resolve_ocr_model,
+    resolve_ocr_protocol,
     resolve_ocr_url,
     validate_fail_on_severity,
 )
@@ -58,7 +59,7 @@ def test_build_ocr_rules_global_only():
 
 
 def test_build_ocr_rules_path_rules_get_global_appended_and_keep_order():
-    rules = [DynaBox({"path": "**/*.test.js", "rule": "- Neutral names."}),
+    rules = [DataDict({"path": "**/*.test.js", "rule": "- Neutral names."}),
              {"path": "app/components/**", "rule": "- Use Polaris."}]
     assert build_ocr_rules("- No sync fs.", rules) == {"rules": [
         {"path": "**/*.test.js", "rule": "- Neutral names.\n\n- No sync fs.", "merge_system_rule": True},
@@ -84,3 +85,21 @@ def test_render_ocr_env_round_trips_through_bash():
     out = subprocess.run(["bash", "-c", 'source /dev/stdin; printf "%s|%s" "$OCR_LANGUAGE" "$OCR_RULE_FILE"'],
                          input=env_text, capture_output=True, text=True, check=True).stdout
     assert out == tricky + "|"
+
+
+@pytest.mark.parametrize("value,expected", [
+    (None, "openai-responses"), ("", "openai-responses"), ("  ", "openai-responses"),
+    ("openai", "openai"), (" Anthropic ", "anthropic"), ("OPENAI-RESPONSES", "openai-responses")])
+def test_resolve_ocr_protocol(value, expected):
+    assert resolve_ocr_protocol(value) == expected
+
+
+@pytest.mark.parametrize("value", ["gemini", "openai_responses", "responses"])
+def test_resolve_ocr_protocol_rejects_unknown(value):
+    with pytest.raises(OcrConfigError):
+        resolve_ocr_protocol(value)
+
+
+def test_render_ocr_env_rejects_trailing_newline_in_key():
+    with pytest.raises(OcrConfigError):
+        render_ocr_env({"FOO\n": "x"})
