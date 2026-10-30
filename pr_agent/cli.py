@@ -15,6 +15,7 @@ from pr_agent.algo.ai_handlers.litellm_helpers import (
     litellm_callbacks_registered,
 )
 from pr_agent.algo.artifacts import inject_artifact_context
+from pr_agent.algo.ocr_config import ocr_config_cli_invocation
 from pr_agent.algo.review_json_output import review_json_output_path
 from pr_agent.algo.run_details import command_failed, init_run_details
 from pr_agent.algo.run_output import get_version
@@ -228,9 +229,11 @@ def run(inargs=None, args=None):
         get_settings().set("CONFIG.EXTRA_CONFIG_URL", getattr(args, "extra_config_url", None))
         async def inner():
             output_token = review_json_output_path.set(getattr(args, "json_output", None) if not diff_mode else None)
+            ocr_token = ocr_config_cli_invocation.set(True)
             try:
                 return await run_inner()
             finally:
+                ocr_config_cli_invocation.reset(ocr_token)
                 review_json_output_path.reset(output_token)
 
         async def run_inner():

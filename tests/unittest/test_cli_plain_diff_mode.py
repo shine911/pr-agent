@@ -72,6 +72,7 @@ _NON_MARKDOWN_COMMANDS = [
     "add_docs",
     "generate_labels",
     "codeowners",
+    "ocr_config",
 ]
 
 
