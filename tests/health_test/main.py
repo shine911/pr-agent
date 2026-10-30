@@ -27,7 +27,7 @@ async def run_async() -> None:
         await agent.handle_request(pr_url, ['describe'])
         pr_header_body = dict(get_settings().data)['artifact']
         assert isinstance(pr_header_body, str), f"Expected artifact to be str, got {type(pr_header_body).__name__}"
-        assert pr_header_body.startswith("###") and "Loại PR" in pr_header_body and "Description" in pr_header_body, \
+        assert pr_header_body.startswith("###") and "PR Type" in pr_header_body and "Description" in pr_header_body, \
             "PR description artifact missing expected sections"
         context['settings'] = copy.deepcopy(original_settings)  # Restore settings after each test
         get_logger().info("PR description generated successfully\n")
