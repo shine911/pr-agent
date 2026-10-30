@@ -11,6 +11,31 @@ ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 
 RUN apt-get update && apt-get install --no-install-recommends -y git curl && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# open-code-review (ocr) is pinned by version and per-arch SHA-256 taken from the
+# upstream release's sha256sum.txt, so the binary cannot change without a
+# deliberate edit here. Bump OCR_VERSION and both hashes together with the
+# vendored third_party/open_code_review/ in the same commit. ocr needs git >= 2.41.
+ARG TARGETARCH
+ARG OCR_VERSION=v1.13.3
+ARG OCR_SHA256_AMD64=843be0e56fdff0a5ca6f86c5866f942d6a372dff1c0ca19e7893d72495abf45c
+ARG OCR_SHA256_ARM64=d9934312a629438d7517a250c8cb739b96282c8e7d04fc75e5b2e5931807318c
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      amd64) ocr_sha256="${OCR_SHA256_AMD64}" ;; \
+      arm64) ocr_sha256="${OCR_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: '${TARGETARCH}'" >&2; exit 1 ;; \
+    esac; \
+    ocr_asset="opencodereview-linux-${TARGETARCH}"; \
+    curl -fsSL -o "/tmp/${ocr_asset}" "https://github.com/alibaba/open-code-review/releases/download/${OCR_VERSION}/${ocr_asset}"; \
+    echo "${ocr_sha256}  /tmp/${ocr_asset}" | sha256sum -c -; \
+    install -m 0755 "/tmp/${ocr_asset}" /usr/local/bin/ocr; \
+    rm -f "/tmp/${ocr_asset}"; \
+    ocr version; \
+    set -- $(git --version | sed -n 's/^git version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p'); \
+    if [ "$#" -ne 2 ] || { [ "$1" -lt 2 ] || { [ "$1" -eq 2 ] && [ "$2" -lt 41 ]; }; }; then \
+      echo "git >= 2.41 required for ocr, found: $(git --version)" >&2; exit 1; \
+    fi
+
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1
 COPY pyproject.toml uv.lock ./
@@ -92,5 +117,6 @@ COPY MANIFEST.in setup.py ./
 
 FROM base AS cli
 COPY pr_agent pr_agent
+COPY third_party/open_code_review third_party/open_code_review
 RUN uv sync --frozen --no-dev --extra all && ln -s /app/.venv/bin/pr-agent /usr/local/bin/pr-agent
 ENTRYPOINT ["python", "pr_agent/cli.py"]
