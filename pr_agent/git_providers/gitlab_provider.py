@@ -2716,20 +2716,18 @@ class GitLabProvider(GitProvider):
     def get_codeowner_approvers(self) -> set[str] | None:
         """Return lowercase usernames that approved the merge request, or None when GitLab cannot be read.
 
-        The author's own approval is dropped. GitLab does not count it when approval by the author is prevented,
-        and the project setting cannot be read on the Free tier, so the author is never counted.
+        Every entry in `approved_by` is counted, the author's included. GitLab only records an approval it accepted,
+        so an author listed here means the project allows author approval.
         """
         try:
             approvals = self.mr.approvals.get()
         except (GitlabError, RequestException) as e:
             get_logger().warning(f"Failed to read approvals of merge request {self.id_mr}: {e}")
             return None
-        author = getattr(self.mr, "author", None)
-        author_name = author.get("username", "").lower() if isinstance(author, dict) else ""
         approvers = set()
         for entry in getattr(approvals, "approved_by", None) or []:
             username = (entry.get("user") or entry).get("username", "").lower()
-            if username and username != author_name:
+            if username:
                 approvers.add(username)
         return approvers
 
