@@ -94,3 +94,31 @@ def test_constructor_does_not_touch_git_provider(monkeypatch):
 
 def test_ocr_config_registered():
     assert command2class["ocr_config"] is PROcrConfig
+
+
+async def test_response_language_note_does_not_leak_into_ocr_rules(tmp_path, monkeypatch):
+    import pr_agent.agent.pr_agent as pr_agent_module
+    from pr_agent.agent.pr_agent import PRAgent
+
+    monkeypatch.setattr(pr_agent_module, "apply_repo_settings", lambda _url: None)
+    monkeypatch.setattr(pr_agent_module, "enforce_request_policy", lambda _url: True)
+    settings = get_settings()
+    assert settings.config.response_language == "vi-VN"
+    assert not settings.ocr_review.extra_instructions
+
+    assert await PRAgent().handle_request(MR_URL, ["ocr_config"]) is True
+
+    assert not (tmp_path / ".ocr" / "rule.json").exists()
+    assert _source_env(tmp_path)["OCR_RULE_FILE"] == ""
+    assert not get_settings().ocr_review.extra_instructions
+
+
+async def test_run_rejects_unknown_llm_protocol(tmp_path):
+    settings = get_settings()
+    saved = settings.ocr_review.get("llm_protocol", "")
+    settings.set("ocr_review.llm_protocol", "gemini")
+    try:
+        assert await PROcrConfig(MR_URL).run() is False
+    finally:
+        settings.set("ocr_review.llm_protocol", saved)
+    assert not (tmp_path / ".ocr" / "ocr.env").exists()

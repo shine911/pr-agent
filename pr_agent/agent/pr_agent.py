@@ -425,6 +425,9 @@ class PRAgent:
         if response_language.lower() != 'en-us':
             get_logger().info(f'User has set the response language to: {response_language}')
             for key in get_settings():
+                if str(key).lower() == "ocr_review":
+                    # Its extra_instructions become third-party OCR rules, not a pr-agent prompt.
+                    continue
                 setting = get_settings().get(key)
                 if isinstance(setting, dynaconf.DataDict):
                     if hasattr(setting, 'extra_instructions'):
