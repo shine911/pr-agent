@@ -3210,13 +3210,13 @@ class TestGitLabCodeOwnersHardening:
         for call in provider.get_pr_file_content.call_args_list:
             assert call.kwargs.get("propagate_errors") is True
 
-    def test_author_approval_is_not_counted(self):
+    def test_author_approval_recorded_by_gitlab_is_counted(self):
         provider = self._provider()
         provider.mr.author = {"username": "Alice"}
         provider.mr.approvals.get.return_value = SimpleNamespace(
             approved_by=[{"user": {"username": "alice"}}, {"user": {"username": "bob"}}])
 
-        assert provider.get_codeowner_approvers() == {"bob"}
+        assert provider.get_codeowner_approvers() == {"alice", "bob"}
 
     def test_resolved_codeowners_thread_does_not_count_as_existing(self):
         provider = self._provider()
