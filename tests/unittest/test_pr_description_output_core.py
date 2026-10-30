@@ -31,6 +31,7 @@ from pr_agent.algo.comment_identity import PRDescriptionHeader
 from pr_agent.algo.types import FilePatchInfo
 from pr_agent.algo.utils import process_description
 from pr_agent.config_loader import get_settings
+from pr_agent.git_providers.git_provider import GitProvider
 from pr_agent.git_providers.gitlab_provider import GitLabProvider
 from pr_agent.tools.pr_description import PRDescription, sanitize_diagram
 from tests.unittest._settings_helpers import restore_settings, snapshot_settings
@@ -461,6 +462,20 @@ class TestPrepareAnswer:
         # The Labels section is suppressed for providers with native label support.
         assert "Labels" not in body
         assert "bug" not in body
+
+    @patch("pr_agent.tools.pr_description.get_settings")
+    def test_type_section_uses_recognized_pr_type_header(self, mock_get_settings):
+        """The heading must stay "PR Type": a regenerated description is only recognized as
+        pr-agent output (and not nested into the user description) when the header matches."""
+        mock_get_settings.return_value = _settings()
+        obj = self._obj({"title": "t", "type": "Bug fix", "description": "d"})
+
+        _, body, _ = obj._prepare_pr_answer()
+
+        assert "### **PR Type**\nBug fix" in body
+        provider = SimpleNamespace(_UNIQUE_PR_AGENT_HEADERS=GitProvider._UNIQUE_PR_AGENT_HEADERS)
+        provider._possible_headers = lambda: GitProvider._possible_headers(provider)
+        assert GitProvider._is_generated_by_pr_agent(provider, body.lower()) is True
 
     @patch("pr_agent.tools.pr_description.get_settings")
     def test_type_section_removed_when_disabled(self, mock_get_settings):

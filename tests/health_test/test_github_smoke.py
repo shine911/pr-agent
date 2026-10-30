@@ -101,7 +101,7 @@ async def _run_smoke() -> None:
     artifact = dict(get_settings().data).get('artifact', '')
     assert isinstance(artifact, str) and artifact.startswith("###"), \
         f"Expected markdown artifact, got {type(artifact).__name__}"
-    assert "Loại PR" in artifact, "PR description artifact missing the PR Type section"
+    assert "PR Type" in artifact, "PR description artifact missing the PR Type section"
     assert "Description" in artifact, "PR description artifact missing the Description section"
 
 
