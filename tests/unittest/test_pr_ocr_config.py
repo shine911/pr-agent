@@ -98,7 +98,6 @@ def test_ocr_config_registered():
 
 async def test_response_language_note_does_not_leak_into_ocr_rules(tmp_path, monkeypatch):
     import pr_agent.agent.pr_agent as pr_agent_module
-    from pr_agent.agent.pr_agent import PRAgent
 
     monkeypatch.setattr(pr_agent_module, "apply_repo_settings", lambda _url: None)
     monkeypatch.setattr(pr_agent_module, "enforce_request_policy", lambda _url: True)
@@ -106,7 +105,7 @@ async def test_response_language_note_does_not_leak_into_ocr_rules(tmp_path, mon
     assert settings.config.response_language == "vi-VN"
     assert not settings.ocr_review.extra_instructions
 
-    assert await PRAgent().handle_request(MR_URL, ["ocr_config"]) is True
+    assert await pr_agent_module.PRAgent().handle_request(MR_URL, ["ocr_config"]) is True
 
     assert not (tmp_path / ".ocr" / "rule.json").exists()
     assert _source_env(tmp_path)["OCR_RULE_FILE"] == ""
