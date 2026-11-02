@@ -1613,7 +1613,7 @@ def main(argv=None):
             with open(args.stderr_log, "r") as f:
                 stderr_content = f.read().strip()
         except FileNotFoundError:
-            pass
+            log("warning: stderr log file not found: %s (continuing without stderr details)" % args.stderr_log)
         if stderr_content:
             poster = make_poster(api_base, api_token, auth_header, config)
             run_tag = config.get("run_tag", "0-0")
