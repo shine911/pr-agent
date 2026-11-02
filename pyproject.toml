@@ -162,6 +162,7 @@ required-version = ">=0.12.10"
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+force-exclude = true # pre-commit passes explicit paths; keep vendored third_party/ excluded
 
 lint.select = [
   "E",    # pycodestyle
@@ -180,7 +181,7 @@ lint.fixable = [
   "FURB",
 ]
 
-lint.exclude = ["api/code_completions"]
+lint.exclude = ["api/code_completions", "third_party/**"]
 
 
 [tool.ruff.lint.per-file-ignores]

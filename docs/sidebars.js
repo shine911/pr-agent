@@ -100,6 +100,7 @@ const sidebars = {
         {type: 'doc', id: 'tools/generate_labels', label: 'Generate labels'},
         {type: 'doc', id: 'tools/update_changelog', label: 'Update changelog'},
         {type: 'doc', id: 'tools/similar_issues', label: 'Similar issues'},
+        {type: 'doc', id: 'tools/ocr_config', label: 'OCR config'},
       ],
     },
     {
