@@ -16,9 +16,9 @@ RUN apt-get update && apt-get install --no-install-recommends -y git curl && apt
 # deliberate edit here. Bump OCR_VERSION and both hashes together with the
 # vendored third_party/open_code_review/ in the same commit. ocr needs git >= 2.41.
 ARG TARGETARCH
-ARG OCR_VERSION=v1.13.3
-ARG OCR_SHA256_AMD64=843be0e56fdff0a5ca6f86c5866f942d6a372dff1c0ca19e7893d72495abf45c
-ARG OCR_SHA256_ARM64=d9934312a629438d7517a250c8cb739b96282c8e7d04fc75e5b2e5931807318c
+ARG OCR_VERSION=v1.13.7
+ARG OCR_SHA256_AMD64=8c1ff786161b6dc0e8dcb06107f18bda8b6181b39ce573400add4a39f90cf19d
+ARG OCR_SHA256_ARM64=f18be0e467aa23a5d9966b38fc0f89144b932970a2082800eacd4062b9257ffa
 RUN set -eu; \
     case "${TARGETARCH}" in \
       amd64) ocr_sha256="${OCR_SHA256_AMD64}" ;; \
