@@ -73,6 +73,25 @@ Only OpenAI models are supported. A model name with a provider prefix other than
 - Every rule is written with `merge_system_rule: true`, so OCR's built-in review rules still apply.
 - Passing `--rule "$OCR_RULE_FILE"` to `ocr review` overrides a `.opencodereview/rule.json` committed in the repository. Omit the flag when no rules are configured.
 
+## One-command review with `ocr_review`
+
+`ocr_review` runs the whole OCR step in one command, so the GitLab job needs a single script line:
+
+```yaml
+  script:
+    - python -m pr_agent.cli --pr_url="$MR_URL" ocr_review
+```
+
+It writes the OCR configuration (the same files as `ocr_config`), runs `ocr config set` and `ocr llm test`, resolves the diff base (from `CI_MERGE_REQUEST_*`, or from the merge request when the pipeline was API-triggered), runs `ocr review`, publishes the result with `post_review.py`, and finally updates the merge request approval.
+
+- The job needs two environment variables: `OCR_LLM_AUTH_TOKEN` (LLM API key) and `GITLAB_API_TOKEN`. `OCR_LLM_EXTRA_BODY` is optional.
+- A failing `ocr review`, `ocr llm test` or `post_review.py` marks the command as failed; set `config__propagate_tool_errors: "true"` to turn that into a non-zero exit code. The result is still published when `ocr review` fails, so its stderr reaches the merge request.
+- The approval step is controlled by the same `config.enable_auto_approval` switch as [/improve](./improve.mdx) and is off by default. When it is `true`, the merge request is approved if OCR reported no comments, and the bot's earlier approval is removed if it reported some. An unreadable result file leaves the approval unchanged. A failed approval never fails the job.
+- The token behind the GitLab credentials must belong to a user who is allowed to approve and is not the merge request author, because GitLab does not let authors approve their own merge request by default.
+- It runs only from the PR-Agent CLI, in the checked-out repository, with the `ocr` binary on `PATH`.
+
+The longer step-by-step pipeline below does the same with individual commands.
+
 ## GitLab pipeline example
 
 Run OCR as a second stage after the PR-Agent describe/review job, using the same PR-Agent image:

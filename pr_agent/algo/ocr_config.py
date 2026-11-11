@@ -8,6 +8,7 @@ from pr_agent.log import get_logger
 OCR_OUTPUT_DIR = ".ocr"
 OCR_ENV_FILENAME = "ocr.env"
 OCR_RULE_FILENAME = "rule.json"
+OCR_RESULT_FILENAME = "ocr-result.json"
 DEFAULT_OCR_LLM_URL = "https://api.openai.com/v1"
 
 # Set by the CLI entrypoint so the tool can tell a local `ocr_config` run from a webhook-triggered one.
