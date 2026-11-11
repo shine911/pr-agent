@@ -39,6 +39,7 @@ from pr_agent.tools.pr_generate_labels import PRGenerateLabels
 from pr_agent.tools.pr_help_message import PRHelpMessage
 from pr_agent.tools.pr_line_questions import PR_LineQuestions
 from pr_agent.tools.pr_ocr_config import PROcrConfig
+from pr_agent.tools.pr_ocr_review import PROcrReview
 from pr_agent.tools.pr_questions import PRQuestions
 from pr_agent.tools.pr_reviewer import PRReviewer
 from pr_agent.tools.pr_similar_issue import PRSimilarIssue
@@ -70,6 +71,7 @@ command2class = {
     "generate_labels": PRGenerateLabels,
     "codeowners": PRCodeOwners,
     "ocr_config": PROcrConfig,
+    "ocr_review": PROcrReview,
     # SECURITY: "/help_docs" is temporarily disabled while the clone-target validation
     # fix is reviewed (see issue #2445). Re-enable by restoring `"help_docs": PRHelpDocs`
     # and its import once the hardening PR is merged.
