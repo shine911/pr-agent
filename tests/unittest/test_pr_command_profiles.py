@@ -30,24 +30,20 @@ DEFAULT_PR_COMMANDS = {
     "github_app": [
         "/describe --pr_description.final_update_message=false",
         "/review",
-        "/improve",
     ],
     "gitlab": [
         "/describe --pr_description.final_update_message=false",
         "/review",
-        "/improve",
     ],
-    "gitea": ["/describe", "/review", "/improve"],
-    "azure_devops_server": ["/describe", "/review", "/improve"],
+    "gitea": ["/describe", "/review"],
+    "azure_devops_server": ["/describe", "/review"],
     "bitbucket_app": [
         "/describe --pr_description.final_update_message=false",
-        "/review",
-        "/improve --pr_code_suggestions.committable_code_suggestions=true",
+        "/review --pr_code_suggestions.committable_code_suggestions=true",
     ],
     "bitbucket_server": [
         "/describe --pr_description.final_update_message=false",
-        "/review",
-        "/improve --pr_code_suggestions.committable_code_suggestions=true",
+        "/review --pr_code_suggestions.committable_code_suggestions=true",
     ],
 }
 
@@ -112,13 +108,65 @@ def test_missing_dynaconf_key_uses_the_default_profile(monkeypatch):
     assert server_utils.get_pr_commands("github_app") == DEFAULT_PR_COMMANDS["github_app"]
 
 
-@pytest.mark.parametrize("override", [[], "", ["/custom"]])
+@pytest.mark.parametrize("override", [[], ["/custom"]])
 def test_explicit_pr_command_overrides_are_preserved(monkeypatch, override):
     configured = copy.deepcopy(override)
     settings = _Settings({"github_app.pr_commands": configured})
     monkeypatch.setattr(server_utils, "get_settings", lambda: settings)
 
-    assert server_utils.get_pr_commands("github_app") is configured
+    assert server_utils.get_pr_commands("github_app") == override
+
+
+def test_bitbucket_default_review_is_committable(monkeypatch):
+    monkeypatch.setattr(server_utils, "get_settings", _Settings)
+
+    for provider in ("bitbucket_app", "bitbucket_server"):
+        commands = server_utils.get_pr_commands(provider)
+        assert "/review --pr_code_suggestions.committable_code_suggestions=true" in commands
+        assert not any(command.startswith("/improve") for command in commands)
+
+
+def test_pr_commands_with_improve_run_one_review(monkeypatch):
+    settings = _Settings({"github_app.pr_commands": ["/describe", "/review", "/improve --x=1"]})
+    monkeypatch.setattr(server_utils, "get_settings", lambda: settings)
+
+    assert server_utils.get_pr_commands("github_app") == ["/describe", "/review --x=1"]
+
+
+async def test_push_commands_with_improve_run_one_review(monkeypatch):
+    agent = _RecordingAgent()
+    monkeypatch.setattr(github_app, "prepare_command", lambda command: command)
+    monkeypatch.setattr(github_app, "should_process_pr_logic", lambda _body: True)
+
+    with request_cycle_context({}):
+        context["settings"] = copy.deepcopy(global_settings)
+        get_settings().set(
+            "GITHUB_APP.PUSH_COMMANDS",
+            ["/review", "/improve --pr_code_suggestions.committable_code_suggestions=true"],
+        )
+        await github_app._perform_auto_commands_github(
+            "push_commands",
+            agent,
+            {"action": "synchronize", "pull_request": {"draft": False}},
+            "https://example.test/pr/1",
+            {},
+        )
+
+    assert agent.commands == ["/review --pr_code_suggestions.committable_code_suggestions=true"]
+
+
+def test_empty_string_pr_command_override_is_normalized(monkeypatch):
+    settings = _Settings({"github_app.pr_commands": ""})
+    monkeypatch.setattr(server_utils, "get_settings", lambda: settings)
+
+    assert server_utils.get_pr_commands("github_app") == []
+
+
+def test_scalar_pr_command_override_is_dispatchable(monkeypatch):
+    settings = _Settings({"github_app.pr_commands": "/review"})
+    monkeypatch.setattr(server_utils, "get_settings", lambda: settings)
+
+    assert server_utils.get_pr_commands("github_app") == ["/review"]
 
 
 def test_provider_sections_no_longer_duplicate_pr_command_defaults():

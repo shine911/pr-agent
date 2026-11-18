@@ -182,13 +182,13 @@ class TestGetGitlabHistoryContextHelper:
 
     @staticmethod
     def _get_helper():
-        from pr_agent.tools.pr_reviewer import _get_gitlab_history_context
+        from pr_agent.commands.pr_reviewer import _get_gitlab_history_context
         return _get_gitlab_history_context
 
     def test_returns_empty_when_feature_disabled(self):
         provider = MagicMock()
         helper = self._get_helper()
-        with patch("pr_agent.tools.pr_reviewer.get_settings") as ms:
+        with patch("pr_agent.commands.pr_reviewer.get_settings") as ms:
             ms.return_value.get.return_value = False
             result = helper(provider)
         assert result == []
@@ -197,7 +197,7 @@ class TestGetGitlabHistoryContextHelper:
     def test_returns_empty_when_provider_has_no_method(self):
         provider = MagicMock(spec=[])  # no attributes
         helper = self._get_helper()
-        with patch("pr_agent.tools.pr_reviewer.get_settings") as ms:
+        with patch("pr_agent.commands.pr_reviewer.get_settings") as ms:
             ms.return_value.get.return_value = True
             result = helper(provider)
         assert result == []
@@ -207,7 +207,7 @@ class TestGetGitlabHistoryContextHelper:
         provider = MagicMock()
         provider.get_conversation_history.return_value = fake_history
         helper = self._get_helper()
-        with patch("pr_agent.tools.pr_reviewer.get_settings") as ms:
+        with patch("pr_agent.commands.pr_reviewer.get_settings") as ms:
             ms.return_value.get.return_value = True
             result = helper(provider)
         assert result == fake_history
@@ -216,7 +216,7 @@ class TestGetGitlabHistoryContextHelper:
         provider = MagicMock()
         provider.get_conversation_history.side_effect = RuntimeError("network error")
         helper = self._get_helper()
-        with patch("pr_agent.tools.pr_reviewer.get_settings") as ms:
+        with patch("pr_agent.commands.pr_reviewer.get_settings") as ms:
             ms.return_value.get.return_value = True
             result = helper(provider)
         assert result == []

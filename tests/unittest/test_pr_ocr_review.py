@@ -6,8 +6,8 @@ import pytest
 from pr_agent.agent.pr_agent import command2class
 from pr_agent.algo.ocr_config import ocr_config_cli_invocation
 from pr_agent.algo.run_details import command_failed, init_run_details
+from pr_agent.commands.pr_ocr_review import PROcrReview
 from pr_agent.config_loader import get_settings
-from pr_agent.tools.pr_ocr_review import PROcrReview
 
 MR_URL = "https://gitlab.example/g/p/-/merge_requests/7"
 _KEYS = [
@@ -60,10 +60,10 @@ def calls(monkeypatch):
             key = "post_review"
         return subprocess.CompletedProcess(cmd, codes.get(key, 0), stdout="", stderr="")
 
-    monkeypatch.setattr("pr_agent.tools.pr_ocr_review.subprocess.run", fake_run)
+    monkeypatch.setattr("pr_agent.commands.pr_ocr_review.subprocess.run", fake_run)
     provider = MagicMock()
-    provider.auto_approve.return_value = True
-    monkeypatch.setattr("pr_agent.tools.pr_ocr_review.get_git_provider_with_context", lambda _url: provider)
+    provider.auto_approve_unpinned.return_value = True
+    monkeypatch.setattr("pr_agent.commands.pr_ocr_review.get_git_provider_with_context", lambda _url: provider)
     recorded.codes = codes
     recorded.provider = provider
     return recorded
@@ -86,7 +86,7 @@ async def test_happy_path_runs_review_publishes_and_approves(calls, tmp_path):
     assert "--rule" not in review
     post = next(kw for c, kw in calls if c[0] != "ocr" and c[0] != "git")
     assert post["env"]["CI_MERGE_REQUEST_IID"] == "7"
-    calls.provider.auto_approve.assert_called_once()
+    calls.provider.auto_approve_unpinned.assert_called_once()
     assert (tmp_path / ".ocr" / "ocr-result.json").exists()
 
 
@@ -109,7 +109,7 @@ async def test_api_triggered_pipeline_resolves_target_from_provider(calls, monke
     monkeypatch.delenv("CI_MERGE_REQUEST_DIFF_BASE_SHA")
     mr = MagicMock(target_branch="main", diff_refs=None)
     monkeypatch.setattr(
-        "pr_agent.tools.pr_ocr_review.get_git_provider_with_context", lambda _url: MagicMock(mr=mr))
+        "pr_agent.commands.pr_ocr_review.get_git_provider_with_context", lambda _url: MagicMock(mr=mr))
     assert await PROcrReview(MR_URL).run() is True
     review = next(c for c in _commands(calls) if c[:2] == ["ocr", "review"])
     assert review[review.index("--from") + 1] == "origin/main"
@@ -120,14 +120,14 @@ async def test_ocr_failure_still_publishes_but_fails_and_skips_approval(calls):
     assert await PROcrReview(MR_URL).run() is False
     assert any(c[0] not in ("ocr", "git") for c in _commands(calls))  # post_review still ran
     assert command_failed() is True
-    calls.provider.auto_approve.assert_not_called()
+    calls.provider.auto_approve_unpinned.assert_not_called()
 
 
 async def test_post_review_failure_fails_and_skips_approval(calls):
     calls.codes["post_review"] = 1
     assert await PROcrReview(MR_URL).run() is False
     assert command_failed() is True
-    calls.provider.auto_approve.assert_not_called()
+    calls.provider.auto_approve_unpinned.assert_not_called()
 
 
 async def test_llm_test_failure_stops_before_review(calls):
@@ -165,13 +165,13 @@ def _fake_result(calls, monkeypatch, content):
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("pr_agent.tools.pr_ocr_review.subprocess.run", fake_run)
+    monkeypatch.setattr("pr_agent.commands.pr_ocr_review.subprocess.run", fake_run)
 
 
 async def test_comments_unapprove_instead_of_approve(calls, monkeypatch):
     _fake_result(calls, monkeypatch, '{"comments": [{"path": "a.js", "body": "bug"}]}')
     assert await PROcrReview(MR_URL).run() is True
-    calls.provider.auto_approve.assert_not_called()
+    calls.provider.auto_approve_unpinned.assert_not_called()
     calls.provider.auto_unapprove.assert_called_once()
 
 
@@ -179,18 +179,18 @@ async def test_comments_unapprove_instead_of_approve(calls, monkeypatch):
 async def test_unreadable_result_changes_nothing(calls, monkeypatch, content):
     _fake_result(calls, monkeypatch, content)
     assert await PROcrReview(MR_URL).run() is True
-    calls.provider.auto_approve.assert_not_called()
+    calls.provider.auto_approve_unpinned.assert_not_called()
     calls.provider.auto_unapprove.assert_not_called()
 
 
 async def test_flag_off_changes_nothing(calls):
     get_settings().set("config.enable_auto_approval", False)
     assert await PROcrReview(MR_URL).run() is True
-    calls.provider.auto_approve.assert_not_called()
+    calls.provider.auto_approve_unpinned.assert_not_called()
     calls.provider.auto_unapprove.assert_not_called()
 
 
 async def test_failed_approval_does_not_fail_the_review(calls):
-    calls.provider.auto_approve.return_value = False
+    calls.provider.auto_approve_unpinned.return_value = False
     assert await PROcrReview(MR_URL).run() is True
     assert command_failed() is False

@@ -1,12 +1,17 @@
+import os
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
+from urllib.parse import unquote, urlsplit
 
 import pytest
 from atlassian.bitbucket import Bitbucket
 from packaging.version import parse as parse_version
-from requests import Request, Response
+from requests import Request, Response, Session
+from requests.adapters import BaseAdapter
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import HTTPError, Timeout
+from requests.utils import get_encoding_from_headers
 
 from pr_agent.algo.comment_identity import (
     PRCodeSuggestionsHeader,
@@ -15,6 +20,7 @@ from pr_agent.algo.comment_identity import (
     PRReviewIdentity,
 )
 from pr_agent.algo.types import EDIT_TYPE, FilePatchInfo
+from pr_agent.commands.pr_code_suggestions import PRCodeSuggestions
 from pr_agent.config_loader import global_settings
 from pr_agent.git_providers import BitbucketServerProvider
 from pr_agent.git_providers.bitbucket_provider import (
@@ -24,13 +30,52 @@ from pr_agent.git_providers.bitbucket_provider import (
 )
 from pr_agent.git_providers.git_provider import FileContentSnapshot, IncompleteBitbucketPullRequestFilesError
 from pr_agent.git_providers.request_timeout import DEFAULT_HTTP_REQUEST_TIMEOUT
-from pr_agent.tools.pr_code_suggestions import PRCodeSuggestions
 
 
 def _added_file(filename="src/example.py", lines=("a = 1", "b = 2", "c = 3")):
     patch = f"@@ -0,0 +1,{len(lines)} @@\n" + "\n".join("+" + line for line in lines)
     return FilePatchInfo(base_file="", head_file="\n".join(lines), patch=patch, filename=filename,
                          edit_type=EDIT_TYPE.ADDED)
+
+
+def _raw_file_response(contents: str, content_type: str, encoding: str = "utf-8") -> Response:
+    """Answer like the src endpoint: the Content-Type comes from the file extension and carries no charset."""
+    response = Response()
+    response.status_code = 200
+    response.url = "https://api.bitbucket.org/2.0/repositories/workspace/repository/src/a1b2c3d4e5f6/CHANGELOG.md"
+    response.headers["Content-Type"] = content_type
+    # As in requests' HTTPAdapter.build_response: ISO-8859-1 for a text/* type without a charset.
+    response.encoding = get_encoding_from_headers(response.headers)
+    response._content = contents.encode(encoding)
+    return response
+
+
+class _RawFileTransport(BaseAdapter):
+    """Answer like Bitbucket Server: raw files by the path and query it decodes, and the PR merge base."""
+
+    def __init__(self):
+        super().__init__()
+        self.files = {}
+        self.reads = []
+
+    def send(self, request, **kwargs):
+        target = urlsplit(request.url)  # a fragment after "#" is never sent
+        response = Response()
+        response.request = request
+        response.headers["Content-Type"] = "application/json"
+        if target.path.endswith("/merge-base"):
+            response.status_code, response._content = 200, b'{"id": "base-sha"}'
+            return response
+        read = (unquote(target.path.removeprefix("/rest/api/1.0/projects/AAA/repos/my-repo/raw/")), target.query)
+        self.reads.append(read)
+        if read in self.files:
+            response.status_code, response._content = 200, self.files[read].encode()
+        else:
+            response.status_code, response._content = 404, b'{"errors": [{"message": "No such path"}]}'
+        return response
+
+    def close(self):
+        pass
 
 
 class TestBitbucketProvider:
@@ -290,6 +335,25 @@ class TestBitbucketProvider:
             "a1b2c3/src/a%23b%3Fc%25.py", headers=provider.headers,
             timeout=DEFAULT_HTTP_REQUEST_TIMEOUT,
         )
+
+    @pytest.mark.parametrize("content_type,contents,encoding", [
+        ("text/markdown", "## 1.2.0 — Café support\n- Thanks José Müller → 中文 ✨\n", "utf-8"),
+        ("text/x-python", "# Bonjour, café crème\nGREETING = 'Grüße'\n", "utf-8"),
+        ("text/plain", "Größe — 中文\n", "utf-8"),
+        ("text/plain", "Größe — 中文\n", "utf-16"),
+        # A file that is not UTF-8 still decodes as Latin-1, as it did before.
+        ("text/plain", "Größe, Maß\n", "latin-1"),
+    ], ids=["markdown", "python", "plain", "utf-16 with BOM", "latin-1"])
+    def test_file_reads_decode_raw_contents_sent_without_a_charset(self, content_type, contents, encoding):
+        provider = self._source_write_provider()
+        response = _raw_file_response(contents, content_type, encoding)
+
+        with patch("pr_agent.git_providers.bitbucket_provider.requests.request", return_value=response):
+            assert provider.get_pr_file_content("CHANGELOG.md", "feature") == contents
+            assert provider.get_pr_file_content_snapshot("CHANGELOG.md", "feature") == FileContentSnapshot(
+                contents, True, "a1b2c3d4e5f6"
+            )
+            assert provider._get_pr_file_content(response.url) == contents
 
     def test_file_snapshot_propagates_server_failure(self):
         provider = self._source_write_provider()
@@ -632,6 +696,25 @@ index 1111111..2222222 100644
             "+diff --git added literal\n"
         )
 
+    _CRLF_DIFF_WITH_PREAMBLE = (
+        "Bitbucket generated diff\r\n"
+        "\r\n"
+        "diff --git a/src/first.py b/src/first.py\r\n"
+        "index 1111111..2222222 100644\r\n"
+        "--- a/src/first.py\r\n"
+        "+++ b/src/first.py\r\n"
+        "@@ -1 +1 @@\r\n"
+        "-old first\r\n"
+        "+new first\r\n"
+        "diff --git a/src/second.py b/src/second.py\r\n"
+        "index 3333333..4444444 100644\r\n"
+        "--- a/src/second.py\r\n"
+        "+++ b/src/second.py\r\n"
+        "@@ -1 +1 @@\r\n"
+        "-old second\r\n"
+        "+new second\r\n"
+    )
+
     def test_get_diff_files_splits_crlf_headers_after_preamble_in_diffstat_order(self):
         provider = BitbucketProvider.__new__(BitbucketProvider)
         provider.diff_files = None
@@ -649,24 +732,7 @@ index 1111111..2222222 100644
 
         diffstats = [first, second]
         provider.pr.diffstat.return_value = diffstats
-        provider.pr.diff.return_value = (
-            "Bitbucket generated diff\r\n"
-            "\r\n"
-            "diff --git a/src/first.py b/src/first.py\r\n"
-            "index 1111111..2222222 100644\r\n"
-            "--- a/src/first.py\r\n"
-            "+++ b/src/first.py\r\n"
-            "@@ -1 +1 @@\r\n"
-            "-old first\r\n"
-            "+new first\r\n"
-            "diff --git a/src/second.py b/src/second.py\r\n"
-            "index 3333333..4444444 100644\r\n"
-            "--- a/src/second.py\r\n"
-            "+++ b/src/second.py\r\n"
-            "@@ -1 +1 @@\r\n"
-            "-old second\r\n"
-            "+new second\r\n"
-        )
+        provider.pr.diff.return_value = self._CRLF_DIFF_WITH_PREAMBLE
 
         settings = MagicMock()
         settings.get.return_value = True
@@ -699,6 +765,160 @@ index 1111111..2222222 100644
             for filename in patch_paths
         )
         return provider, diffstats
+
+    def test_cold_filename_and_diff_pair_share_one_diffstat_acquisition(self):
+        provider, diffstats = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        provider.git_files = None
+        provider.pr.diffstat.side_effect = lambda: iter(diffstats)
+        with patch("pr_agent.git_providers.bitbucket_provider.context", {}):
+            assert provider.get_files() == ["src/first.py", "src/second.py"]
+            files = provider.get_diff_files()
+            assert provider.get_diff_files() is files
+
+        assert [(file.filename, file.edit_type, file.num_plus_lines, file.num_minus_lines) for file in files] == [
+            ("src/first.py", EDIT_TYPE.MODIFIED, 1, 1),
+            ("src/second.py", EDIT_TYPE.MODIFIED, 1, 1),
+        ]
+        assert all(file.patch == "@@ -1 +1 @@\n-old\n+new\n" for file in files)
+        provider.pr.diffstat.assert_called_once_with()
+        provider.pr.diff.assert_called_once_with()
+
+    def test_warm_context_filenames_do_not_supply_a_raw_diffstat(self):
+        provider, _ = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        provider.git_files = None
+        shared_names = ["shared.py"]
+        with patch("pr_agent.git_providers.bitbucket_provider.context", {"git_files": shared_names}):
+            assert provider.get_files() is shared_names
+            provider.pr.diffstat.assert_not_called()
+            files = provider.get_diff_files()
+
+        assert [file.filename for file in files] == ["src/first.py", "src/second.py"]
+        provider.pr.diffstat.assert_called_once_with()
+
+    def test_successful_empty_filenames_discard_an_older_raw_handoff(self):
+        provider, diffstats = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        provider.git_files = None
+        provider.pr.diffstat.side_effect = [iter(diffstats), iter([]), iter([diffstats[1]])]
+        provider.pr.diff.return_value = (
+            "diff --git a/src/second.py b/src/second.py\n"
+            "--- a/src/second.py\n+++ b/src/second.py\n@@ -1 +1 @@\n-old\n+new\n"
+        )
+        request_context = {}
+        with patch("pr_agent.git_providers.bitbucket_provider.context", request_context):
+            assert provider.get_files() == ["src/first.py", "src/second.py"]
+            request_context["git_files"] = []
+            assert provider.get_files() == []
+            assert [file.filename for file in provider.get_diff_files()] == ["src/second.py"]
+
+        assert provider.pr.diffstat.call_count == 3
+
+    def test_filtered_empty_diff_is_consistent_within_a_command_and_reacquires_at_the_boundary(self):
+        provider, _ = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        provider.git_files = None
+        with (
+            patch("pr_agent.git_providers.bitbucket_provider.context", {}),
+            patch("pr_agent.git_providers.bitbucket_provider.filter_ignored", return_value=[]),
+        ):
+            assert provider.get_files() == ["src/first.py", "src/second.py"]
+            assert provider.get_diff_files() == []
+            calls_after_first_diff = provider.pr.diffstat.call_count
+            assert calls_after_first_diff == 1
+            # The filtered-empty verdict is completed, so the second call in the command
+            # is served from the cache instead of re-fetching (#4860).
+            assert provider.get_diff_files() == []
+            assert provider.pr.diffstat.call_count == calls_after_first_diff
+
+            # The command boundary re-acquires, as every auto command gets a fresh scope.
+            provider.reset_diff_cache_for_command()
+            assert provider.get_diff_files() == []
+
+        assert provider.pr.diffstat.call_count == calls_after_first_diff + 1
+
+    def test_partial_filename_pagination_falls_back_without_partial_publication(self):
+        provider, diffstats = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        provider.git_files = None
+
+        def partial_page():
+            yield diffstats[0]
+            assert provider.git_files is None
+            assert getattr(provider, "_pending_diffstat", None) is None
+            raise RuntimeError("next page failed")
+
+        provider.pr.diffstat.side_effect = [partial_page(), iter(diffstats), iter(diffstats)]
+        with patch("pr_agent.git_providers.bitbucket_provider.context", {}):
+            assert provider.get_files() == ["src/first.py", "src/second.py"]
+            assert provider.pr.diffstat.call_count == 2
+            assert [file.filename for file in provider.get_diff_files()] == ["src/first.py", "src/second.py"]
+            assert provider.pr.diffstat.call_count == 2
+
+    @pytest.mark.parametrize("recover", [False, True])
+    def test_filename_conversion_stops_iteration_and_reacquires_in_fallback(self, recover):
+        provider, diffstats = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        provider.git_files = None
+        events = []
+        malformed = SimpleNamespace(new=SimpleNamespace())
+
+        def bad_page():
+            events.append("start")
+            yield malformed
+            events.append("advanced past malformed filename")
+            raise AssertionError("conversion must precede the next page")
+
+        provider.pr.diffstat.side_effect = [bad_page(), iter(diffstats) if recover else bad_page()]
+        request_context = {}
+        with patch("pr_agent.git_providers.bitbucket_provider.context", request_context):
+            if recover:
+                assert provider.get_files() == ["src/first.py", "src/second.py"]
+            else:
+                with pytest.raises(AttributeError, match="path"):
+                    provider.get_files()
+                assert provider.git_files is None
+                assert getattr(provider, "_pending_diffstat", None) is None
+            assert request_context == {}
+
+        assert provider.pr.diffstat.call_count == 2
+        assert events == (["start"] if recover else ["start", "start"])
+
+    def test_context_write_failure_keeps_the_complete_filename_result(self):
+        provider, _ = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        provider.git_files = None
+        request_context = MagicMock()
+        request_context.get.return_value = None
+        request_context.__setitem__.side_effect = RuntimeError("context write failed")
+        with patch("pr_agent.git_providers.bitbucket_provider.context", request_context):
+            assert provider.get_files() == ["src/first.py", "src/second.py"]
+            provider.pr.diffstat.assert_called_once_with()
+            assert [file.filename for file in provider.get_diff_files()] == ["src/first.py", "src/second.py"]
+            provider.pr.diffstat.assert_called_once_with()
+
+    def test_downstream_diff_failure_reacquires_after_a_filename_handoff(self):
+        provider, _ = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        provider.git_files = None
+        complete_patch = provider.pr.diff.return_value
+        provider.pr.diff.side_effect = ["", complete_patch]
+        with patch("pr_agent.git_providers.bitbucket_provider.context", {}):
+            provider.get_files()
+            with pytest.raises(IncompleteBitbucketPullRequestFilesError, match="changed-file inventory"):
+                provider.get_diff_files()
+            assert provider.diff_files is None
+            calls_after_failure = provider.pr.diffstat.call_count
+            assert calls_after_failure == 1
+            assert [file.filename for file in provider.get_diff_files()] == ["src/first.py", "src/second.py"]
+
+        assert provider.pr.diffstat.call_count == calls_after_failure + 1
+
+    def test_warm_normalized_diff_discards_an_unused_raw_handoff(self):
+        provider, _ = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        provider.git_files = None
+        cached = [_added_file()]
+        provider.diff_files = cached
+        with patch("pr_agent.git_providers.bitbucket_provider.context", {}):
+            provider.get_files()
+            assert provider.get_diff_files() is cached
+
+        provider.pr.diffstat.assert_called_once_with()
+        provider.pr.diff.assert_not_called()
+        assert getattr(provider, "_pending_diffstat", None) is None
 
     @pytest.mark.parametrize("patch_paths", [[], ["src/first.py"],
                                              ["src/first.py", "src/second.py", "src/third.py"]])
@@ -734,6 +954,78 @@ index 1111111..2222222 100644
     ])
     def test_diff_header_paths_decode_quoted_git_paths(self, header, paths):
         assert _diff_header_paths(header + "\n") == paths
+
+    @pytest.mark.parametrize("patch,paths", [
+        (
+            "diff --git a/old name.py b/new name.py\n"
+            "similarity index 100%\n"
+            "rename from old name.py\n"
+            "rename to new name.py\n",
+            ("old name.py", "new name.py"),
+        ),
+        (
+            "diff --git a/old name.py b/new name.py\n"
+            "similarity index 85%\n"
+            "rename from old name.py\n"
+            "rename to new name.py\n"
+            "--- a/old name.py\n"
+            "+++ b/new name.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n",
+            ("old name.py", "new name.py"),
+        ),
+        (
+            'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251 renamed.py"\n'
+            "similarity index 100%\n"
+            'rename from "caf\\303\\251.py"\n'
+            'rename to "caf\\303\\251 renamed.py"\n',
+            ("café.py", "café renamed.py"),
+        ),
+        (
+            "diff --git a/old name.py b/new name.py\n"
+            "--- a/old name.py\n"
+            "+++ b/new name.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n",
+            ("old name.py", "new name.py"),
+        ),
+        (
+            "diff --git a/new name.py b/new name.py\n"
+            "--- /dev/null\n"
+            "+++ b/new name.py\n"
+            "@@ -0,0 +1 @@\n"
+            "+new\n",
+            ("new name.py", "new name.py"),
+        ),
+        (
+            "diff --git a/old name.py b/old name.py\n"
+            "--- a/old name.py\n"
+            "+++ /dev/null\n"
+            "@@ -1 +0,0 @@\n"
+            "-old\n",
+            ("old name.py", "old name.py"),
+        ),
+    ])
+    def test_diff_header_paths_read_ambiguous_headers_from_patch_metadata(self, patch, paths):
+        assert _diff_header_paths(patch) == paths
+
+    def test_get_diff_files_keeps_renamed_file_with_space_in_path(self):
+        diff_file = self._get_single_diff_file(
+            "diff --git a/old name.py b/new name.py\n"
+            "similarity index 100%\n"
+            "rename from old name.py\n"
+            "rename to new name.py\n",
+            "renamed",
+            0,
+            0,
+            "new name.py",
+            "old name.py",
+        )
+
+        assert diff_file.filename == "new name.py"
+        assert diff_file.edit_type == EDIT_TYPE.RENAMED
 
     @pytest.mark.parametrize("patch_paths", [
         ["src/first.py", "src/other.py"],
@@ -774,6 +1066,41 @@ index 1111111..2222222 100644
 
         assert [file.filename for file in files] == ["src/second.py"]
         assert provider.get_filtered_diff_file_names() == ["pnpm-lock.yaml"]
+
+    def test_get_diff_files_decodes_each_file_of_a_diff_that_is_not_all_utf8(self):
+        provider, diffstats = self._aggregate_diff_provider([])
+        diffstats[1].new.path = diffstats[1].old.path = "messages_de.properties"
+        utf8_patch = "@@ -1,2 +1,2 @@\n # Grüße aus Köln – 你好\n-print('café')\n+print('café ☕')\n"
+        latin1_patch = "@@ -1 +1 @@\n-greeting=Grüße\n+greeting=Schöne Grüße\n"
+        raw_diff = (
+            ("diff --git a/src/first.py b/src/first.py\n--- a/src/first.py\n+++ b/src/first.py\n"
+             + utf8_patch).encode("utf-8")
+            + ("diff --git a/messages_de.properties b/messages_de.properties\n"
+               "--- a/messages_de.properties\n+++ b/messages_de.properties\n" + latin1_patch).encode("iso-8859-1")
+        )
+        # Like atlassian's PullRequest.diff(), which decodes the response bytes with the requested encoding.
+        provider.pr.diff.side_effect = lambda encoding="utf-8": str(raw_diff, encoding)
+        with patch("pr_agent.git_providers.bitbucket_provider.filter_ignored", return_value=diffstats):
+            files = provider.get_diff_files()
+
+        assert [file.patch for file in files] == [utf8_patch, latin1_patch]
+        assert provider.pr.diff.call_args_list == [call(), call(encoding="iso-8859-1")]
+
+    def test_get_diff_files_keeps_utf8_text_when_the_first_diff_request_fails(self):
+        provider, diffstats = self._aggregate_diff_provider(["src/first.py", "src/second.py"])
+        raw_diff = provider.pr.diff.return_value.replace("+new\n", "+new café ☕\n").encode("utf-8")
+        failures = [RequestsConnectionError("Connection reset by peer")]
+
+        def diff(encoding="utf-8"):
+            if failures:
+                raise failures.pop()
+            return str(raw_diff, encoding)
+
+        provider.pr.diff.side_effect = diff
+        with patch("pr_agent.git_providers.bitbucket_provider.filter_ignored", return_value=diffstats):
+            files = provider.get_diff_files()
+
+        assert [file.patch for file in files] == ["@@ -1 +1 @@\n-old\n+new café ☕\n"] * 2
 
     def test_get_repo_file_content_reads_from_target_branch(self):
         # Repo-context files must be read from the PR destination (target) branch,
@@ -1336,7 +1663,7 @@ class TestBitbucketServerProvider:
     ):
         provider = self._diff_provider(version, changes)
         if ignored:
-            monkeypatch.setattr(global_settings.ignore, "glob", ["ignored.py"])
+            monkeypatch.setitem(global_settings.ignore, "glob", ["ignored.py"])
 
         files = provider.get_diff_files()
 
@@ -1571,6 +1898,54 @@ class TestBitbucketServerProvider:
         assert bitbucket_class.call_args.kwargs["url"] == server_url
         bitbucket_client.get.assert_called_once_with("rest/api/1.0/application-properties")
         bitbucket_client.get_pull_request.assert_called_once_with(workspace_slug, "repo", pull_request_id=7)
+
+    @pytest.mark.parametrize(
+        ("pr_url", "parsed_pr", "server_url"),
+        [
+            (
+                "https://git.example.com/projects/PROJ/repos/users/pull-requests/7",
+                ("PROJ", "users", 7),
+                "https://git.example.com",
+            ),
+            (
+                "https://git.example.com/projects/~ALICE/repos/users/pull-requests/7",
+                ("~ALICE", "users", 7),
+                "https://git.example.com",
+            ),
+            (
+                "https://git.example.com/users/alice/repos/projects/pull-requests/7",
+                ("~alice", "projects", 7),
+                "https://git.example.com",
+            ),
+            (
+                "https://git.example.com/bitbucket/users/alice/repos/projects/pull-requests/7/overview",
+                ("~alice", "projects", 7),
+                "https://git.example.com/bitbucket",
+            ),
+            (
+                "https://git.example.com/projects/projects/PROJ/repos/repo/pull-requests/7",
+                ("PROJ", "repo", 7),
+                "https://git.example.com/projects",
+            ),
+        ],
+    )
+    def test_parse_urls_with_segments_named_projects_or_users(self, pr_url, parsed_pr, server_url):
+        assert BitbucketServerProvider._parse_pr_url(pr_url) == parsed_pr
+        assert BitbucketServerProvider._parse_bitbucket_server(pr_url) == server_url
+
+    def test_constructor_reads_project_of_repository_named_users(self):
+        bitbucket_client = MagicMock(Bitbucket)
+        bitbucket_client.get.return_value = {"version": "8.16"}
+        bitbucket_client.get_pull_request.return_value = {}
+
+        with patch(
+            "pr_agent.git_providers.bitbucket_server_provider.Bitbucket",
+            return_value=bitbucket_client,
+        ):
+            provider = BitbucketServerProvider("https://git.example.com/projects/PROJ/repos/users/pull-requests/7")
+
+        assert provider.workspace_slug == "PROJ"
+        bitbucket_client.get_pull_request.assert_called_once_with("PROJ", "users", pull_request_id=7)
 
     def test_get_issue_comments_normalizes_top_level_comments_from_all_activities(self):
         provider = self._persistent_provider()
@@ -1948,7 +2323,9 @@ class TestBitbucketServerProvider:
         provider.pr_num = 1
         provider.pr = SimpleNamespace(fromRef={"latestCommit": "head-sha"})
         provider.bitbucket_api_version = None
-        provider.diff_files = []
+        # Nothing cached yet; under the #4860 contract an empty list is a completed
+        # verdict, so "not fetched" is None.
+        provider.diff_files = None
         provider.bitbucket_client = MagicMock()
         provider.bitbucket_client.get_pull_requests_commits.return_value = [
             {"parents": [{"id": "base-sha"}]}
@@ -1994,6 +2371,46 @@ class TestBitbucketServerProvider:
 
         with pytest.raises(HTTPError, match="500 error"):
             provider.get_diff_files()
+
+    @pytest.fixture
+    def raw_read_provider(self):
+        transport = _RawFileTransport()
+        with Session() as session:
+            session.mount("https://", transport)
+            provider = BitbucketServerProvider.__new__(BitbucketServerProvider)
+            provider.workspace_slug = "AAA"
+            provider.repo_slug = "my-repo"
+            provider.bitbucket_client = Bitbucket(url="https://bb.example.com", token="test-token", session=session)
+            yield provider, transport
+
+    @pytest.mark.parametrize("path", ["src/C#/Program.cs", "docs/what?.md", "data/100%25.txt"])
+    def test_get_file_sends_the_whole_path_and_revision(self, raw_read_provider, path):
+        provider, transport = raw_read_provider
+        transport.files[(path, "at=abc123")] = "content\n"
+
+        content = provider.get_file(path, "abc123")
+
+        assert transport.reads == [(path, "at=abc123")]
+        assert content == b"content\n"
+
+    def test_get_diff_files_reads_a_csharp_folder_file_at_both_revisions(self, raw_read_provider):
+        provider, transport = raw_read_provider
+        transport.files[("src/C#/Program.cs", "at=base-sha")] = "old\n"
+        transport.files[("src/C#/Program.cs", "at=head-sha")] = "new\n"
+        provider.pr_num = 1
+        provider.pr = SimpleNamespace(fromRef={"latestCommit": "head-sha"})
+        provider.bitbucket_api_version = parse_version("8.16")
+        provider.diff_files = None
+        provider._get_pull_request_changes = MagicMock(
+            return_value=[{"type": "MODIFY", "path": {"toString": "src/C#/Program.cs"}}]
+        )
+
+        [diff_file] = provider.get_diff_files()
+
+        assert transport.reads == [("src/C#/Program.cs", "at=base-sha"), ("src/C#/Program.cs", "at=head-sha")]
+        assert diff_file.filename == "src/C#/Program.cs"
+        assert diff_file.content_fetch_failed is False
+        assert diff_file.patch == "@@ -1 +1 @@\n-old\n+new\n"
 
     def test_get_repo_file_content_propagates_non_404_errors(self):
         provider = BitbucketServerProvider.__new__(BitbucketServerProvider)
@@ -2514,7 +2931,7 @@ class TestBitbucketGlobalSettings:
         ref_resp = MagicMock(status_code=200)
         ref_resp.json.return_value = {"target": {"hash": "settings-sha"}}
         file_resp = MagicMock(status_code=200)
-        file_resp.text = "[pr_reviewer]\nnum_max_findings = 5\n"
+        file_resp.content = b"[pr_reviewer]\nnum_max_findings = 5\n"
         with patch("pr_agent.git_providers.bitbucket_provider.requests.request",
                    side_effect=[repo_resp, ref_resp, file_resp]) as rq, \
              patch("pr_agent.git_providers.git_provider.get_settings") as ms:
@@ -2526,6 +2943,20 @@ class TestBitbucketGlobalSettings:
         assert "myws/pr-agent-settings" in rq.call_args_list[0].args[1]
         assert "refs/branches/release%2F1.0" in rq.call_args_list[1].args[1]
         assert "src/settings-sha/.pr_agent.toml" in rq.call_args_list[2].args[1]
+
+    def test_workspace_settings_keep_non_ascii_values(self):
+        provider = self._provider()
+        repo_resp = MagicMock(status_code=200)
+        repo_resp.json.return_value = {"mainbranch": {"name": "main"}}
+        ref_resp = MagicMock(status_code=200)
+        ref_resp.json.return_value = {"target": {"hash": "settings-sha"}}
+        toml = '[pr_reviewer]\nextra_instructions = "Antworte auf Deutsch: Größe, Maß — 中文"\n'
+        with patch("pr_agent.git_providers.bitbucket_provider.requests.request",
+                   side_effect=[repo_resp, ref_resp, _raw_file_response(toml, "text/plain")]), \
+             patch("pr_agent.git_providers.git_provider.get_settings") as ms:
+            ms.return_value.config.use_global_settings_file = True
+            ms.return_value.config.global_settings_repo = "pr-agent-settings"
+            assert provider._get_global_repo_settings() == toml.encode("utf-8")
 
     @pytest.mark.parametrize("status_code", [403, 404])
     def test_missing_or_inaccessible_default_branch_ref_returns_empty_and_caches(self, status_code):
@@ -2594,7 +3025,7 @@ class TestBitbucketGlobalSettings:
         ref_resp = MagicMock(status_code=200)
         ref_resp.json.return_value = {"target": {"hash": "settings-sha"}}
         file_resp = MagicMock(status_code=200)
-        file_resp.text = "[pr_reviewer]\nx = 1\n"
+        file_resp.content = b"[pr_reviewer]\nx = 1\n"
         with patch("pr_agent.git_providers.bitbucket_provider.requests.request",
                    side_effect=[repo_resp, ref_resp, file_resp]) as rq, \
              patch("pr_agent.git_providers.git_provider.get_settings") as ms:
@@ -2617,13 +3048,26 @@ class TestBitbucketLocalSettingsRobustness:
             data={"destination": {"commit": {"hash": "destination-sha"}}},
         )
         resp = MagicMock(status_code=200)
-        resp.text = "[pr_reviewer]\nnum_max_findings = 5\n"
+        resp.content = b"[pr_reviewer]\nnum_max_findings = 5\n"
         with patch("pr_agent.git_providers.bitbucket_provider.requests.request", return_value=resp) as rq, \
              patch("pr_agent.git_providers.git_provider.get_settings") as ms:
             ms.return_value.config.use_global_settings_file = False
             result = provider.get_repo_settings()
         assert result == [("local", b"[pr_reviewer]\nnum_max_findings = 5\n")]
         assert "src/destination-sha/.pr_agent.toml" in rq.call_args.args[1]
+
+    def test_get_repo_settings_keeps_non_ascii_values(self):
+        provider = BitbucketProvider.__new__(BitbucketProvider)
+        provider.workspace_slug = "myws"
+        provider.repo_slug = "myrepo"
+        provider.headers = {"Authorization": "Bearer x"}
+        provider.pr = MagicMock(data={"destination": {"commit": {"hash": "destination-sha"}}})
+        toml = '[pr_reviewer]\nextra_instructions = "Antworte auf Deutsch: Größe, Maß — 中文"\n'
+        with patch("pr_agent.git_providers.bitbucket_provider.requests.request",
+                   return_value=_raw_file_response(toml, "text/plain")), \
+             patch("pr_agent.git_providers.git_provider.get_settings") as ms:
+            ms.return_value.config.use_global_settings_file = False
+            assert provider.get_repo_settings() == [("local", toml.encode("utf-8"))]
 
     def test_get_repo_settings_ignores_error_response_for_local(self):
         # A non-200/404 response (e.g. 500 error page) must NOT be treated as local TOML content.
@@ -2732,3 +3176,71 @@ def test_a_failed_file_read_is_reported(failure):
 
     assert read() == ""
     assert f"Failed to read {link!r}" in _capture_logs(read)
+
+
+@pytest.mark.parametrize("old,new", [
+    (" old.py", "new.py"), ("old.py ", "new.py"),
+    ("old.py", " new.py"), ("old.py", "new.py "),
+])
+@pytest.mark.parametrize("crlf", [False, True])
+def test_significant_rename_spaces_stay_aligned_with_the_changed_file_inventory(old, new, crlf):
+    raw = (f"diff --git a/{old} b/{new}\nsimilarity index 100%\n"
+           f"rename from {old}\nrename to {new}\n")
+    if crlf:
+        raw = raw.replace("\n", "\r\n")
+
+    diff_file = TestBitbucketProvider._get_single_diff_file(raw, "renamed", 0, 0, new, old)
+
+    assert diff_file.filename == new
+    assert _diff_header_paths(raw) == (old, new)
+    assert diff_file.edit_type == EDIT_TYPE.RENAMED
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot create all significant-space filenames")
+@pytest.mark.parametrize("old,new", [
+    (" old.py", "new.py"), ("old.py ", "new.py"),
+    ("old.py", " new.py"), ("old.py", "new.py "),
+])
+def test_paths_preserve_spaces_in_actual_git_rename_output(tmp_path, old, new):
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-C", str(tmp_path), *args],
+            env=environment, stderr=subprocess.PIPE, text=True,
+        )
+
+    git("init", "-q")
+    (tmp_path / old).write_text("sample\n", encoding="utf-8")
+    git("add", "--all")
+    git("-c", "user.name=Regression", "-c", "user.email=regression@example.invalid", "commit", "-qm", "baseline")
+    git("mv", "--", old, new)
+    raw_diff = git("diff", "--cached", "--no-ext-diff", "--find-renames")
+
+    assert _diff_header_paths(raw_diff) == (old, new)
+
+
+@pytest.mark.parametrize("repo_git_url", [
+    "https://bitbucket.org/workspace/site.github.io.git",
+    "https://bitbucket.org/workspace/site.github.io.git/",
+])
+def test_get_canonical_url_parts_keeps_dot_git_inside_repo_name(repo_git_url):
+    provider = BitbucketProvider.__new__(BitbucketProvider)
+
+    assert provider.get_canonical_url_parts(repo_git_url=repo_git_url, desired_branch="main") == (
+        "https://bitbucket.org/workspace/site.github.io/src/main",
+        "",
+    )
+
+
+def test_server_get_canonical_url_parts_keeps_dot_git_inside_repo_name():
+    provider = BitbucketServerProvider.__new__(BitbucketServerProvider)
+    provider.bitbucket_server_url = "https://bitbucket.example.com"
+
+    assert provider.get_canonical_url_parts(
+        repo_git_url="https://bitbucket.example.com/scm/PROJ/site.github.io.git", desired_branch="main"
+    ) == (
+        "https://bitbucket.example.com/projects/PROJ/repos/site.github.io/browse",
+        "?at=refs%2Fheads%2Fmain",
+    )

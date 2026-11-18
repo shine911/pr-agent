@@ -27,8 +27,8 @@ def test_the_other_fields_still_render():
     """Keep the remaining rows while excluding todo_summary."""
     out = convert_to_markdown_v2(copy.deepcopy(DATA), gfm_supported=True)
 
-    assert "Công sức ước tính để đánh giá" in out
-    assert "Không phát hiện vấn đề bảo mật" in out
+    assert "Estimated effort to review" in out
+    assert "No security concerns identified" in out
 
 
 def test_rendering_twice_gives_the_same_output():

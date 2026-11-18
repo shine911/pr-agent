@@ -1,6 +1,11 @@
+import io
+import re
+
 from unidiff import PatchSet
+from unidiff.constants import LINE_TYPE_NO_NEWLINE
 from unidiff.errors import UnidiffParseError
 
+from pr_agent.algo.git_patch_processing import split_diff_lines
 from pr_agent.algo.git_patch_processing import to_hunk_only_patch as _to_hunk_only_patch
 from pr_agent.algo.types import EDIT_TYPE, FilePatchInfo
 from pr_agent.log import get_logger
@@ -21,13 +26,43 @@ def _strip_prefix(path: str | None) -> str | None:
     return path
 
 
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,(?P<source_length>\d+))? \+\d+(?:,(?P<target_length>\d+))? @@")
+
+
+def _normalize_metadata_line_endings(diff_text: str) -> str:
+    """Normalize CRLF metadata lines while preserving hunk payload line endings."""
+    normalized: list[str] = []
+    hunk_lines_remaining = 0
+
+    # Split only on LF, as Git does. Tracking hunk body length prevents a payload
+    # line that begins with "--- " or "+++ " from being mistaken for a file header.
+    for line in io.StringIO(diff_text, newline="\n"):
+        if hunk_lines_remaining == 0 and line.endswith("\r\n"):
+            line = line[:-2] + "\n"
+        normalized.append(line)
+
+        hunk = _HUNK_HEADER.match(line)
+        if hunk:
+            source_length = int(hunk.group("source_length") or 1)
+            target_length = int(hunk.group("target_length") or 1)
+            hunk_lines_remaining = source_length + target_length
+        elif hunk_lines_remaining and not line.startswith("\\"):
+            # A context line counts toward both the source and the target length.
+            hunk_lines_remaining -= 1 if line.startswith(("+", "-")) else 2
+
+    return "".join(normalized)
+
+
 def parse_unified_diff(diff_text: str) -> list[FilePatchInfo]:
     """Parse a unified diff into FilePatchInfo objects (patch + metadata only).
 
     base_file / head_file are left empty here; the provider fills them from the
     working tree and by reverse-applying the patch. Binary files are skipped.
     """
-    patch_set = PatchSet(diff_text)
+    # unidiff leaves CR from CRLF file headers in parsed paths, which can make a
+    # modified file look like a rename. Normalize metadata framing only so hunk data
+    # retains its original line endings.
+    patch_set = PatchSet(_normalize_metadata_line_endings(diff_text))
     files: list[FilePatchInfo] = []
     for pf in patch_set:
         if pf.is_binary_file:
@@ -56,6 +91,8 @@ def parse_unified_diff(diff_text: str) -> list[FilePatchInfo]:
                 filename=filename,
                 edit_type=edit_type,
                 old_filename=old_filename,
+                num_plus_lines=pf.added,
+                num_minus_lines=pf.removed,
             )
         )
     return files
@@ -71,9 +108,12 @@ def reconstruct_base_file_checked(head_file_str: str, patch_str: str) -> str | N
     if len(patch_set) != 1:
         return None
 
-    head_lines = head_file_str.splitlines()
+    head_lines = split_diff_lines(head_file_str)
     base_lines: list[str] = []
     head_idx = 0  # 0-based cursor into head_lines
+    # Whether the base ends with a newline, when a "\ No newline at end of file"
+    # marker in the patch says so; None leaves it to the head file.
+    base_ends_with_newline = None
 
     for hunk in patch_set[0]:
         # 1-based -> 0-based. A hunk with no head lines (a pure deletion, as in
@@ -85,8 +125,19 @@ def reconstruct_base_file_checked(head_file_str: str, patch_str: str) -> str | N
         base_lines.extend(head_lines[head_idx:hunk_head_start])
         head_idx = hunk_head_start
 
+        previous = None
         for line in hunk:
-            value = line.value.rstrip("\r\n")
+            if line.line_type == LINE_TYPE_NO_NEWLINE:
+                # The marker applies to the line before it: a removed or context line
+                # is the base's last line, so the base has no final newline. Marked only
+                # on an added line, the head lacks it and the base's last line has one.
+                if previous is not None and not previous.is_added:
+                    base_ends_with_newline = False
+                elif previous is not None and base_ends_with_newline is None:
+                    base_ends_with_newline = True
+                continue
+            previous = line
+            value = line.value.removesuffix("\n").removesuffix("\r")
             if line.is_context:
                 if head_idx >= len(head_lines) or head_lines[head_idx] != value:
                     return None
@@ -104,12 +155,10 @@ def reconstruct_base_file_checked(head_file_str: str, patch_str: str) -> str | N
     # Preserve a trailing newline only when the base actually has content; an
     # empty base (e.g. reversing an add-file patch) must stay "" so downstream
     # extend_patch() correctly treats it as having no original file.
-    if base_lines and head_file_str.endswith("\n"):
+    if base_ends_with_newline is None:
+        # An empty head has no final newline to inherit. Removed lines in a
+        # unified diff include their newline unless a marker already decided.
+        base_ends_with_newline = True if not head_file_str else head_file_str.endswith("\n")
+    if base_lines and base_ends_with_newline:
         result += "\n"
     return result
-
-
-def reconstruct_base_file(head_file_str: str, patch_str: str) -> str:
-    """Reverse-apply a patch, returning "" when it does not match the head file."""
-    result = reconstruct_base_file_checked(head_file_str, patch_str)
-    return result if result is not None else ""

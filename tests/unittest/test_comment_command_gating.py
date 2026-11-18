@@ -6,13 +6,13 @@ from unittest import mock
 
 import pytest
 from starlette.background import BackgroundTasks
-from starlette_context import request_cycle_context
+from starlette_context import context, request_cycle_context
 
-import pr_agent.servers.gitea_app as gitea_app
-import pr_agent.servers.gitlab_webhook as gitlab_webhook
+from pr_agent.algo.utils import decode_user_text_args
 from pr_agent.config_loader import global_settings
 from pr_agent.identity_providers.identity_provider import Eligibility
-from pr_agent.servers import bitbucket_app, bitbucket_server_webhook, github_app
+from pr_agent.servers import bitbucket_app, bitbucket_server_webhook, gitea_app, github_app, gitlab_webhook
+from pr_agent.servers.github_common import handle_file_question_comment
 from pr_agent.servers.utils import is_ask_command_comment, is_command_comment
 
 
@@ -61,7 +61,9 @@ def test_is_command_comment(body, expected):
         ("/ask_line --line_start=1", True),
         ("/asking about retries", False),
         ("/askfoo", False),
-        ("/ASK why?", False),
+        ("/ASK why?", True),
+        ("/ask_question why?", True),
+        ("/ASK_LINE why?", True),
         ("/review please, I will /ask later", False),
         ("review please, I will /ask later", False),
         ("can you /ask about this line?", False),
@@ -144,8 +146,9 @@ async def test_gitlab_diffnote_review_mentioning_ask_stays_review(monkeypatch):
     )]
 
 
-async def test_gitlab_diffnote_starting_with_ask_still_routes_to_ask_line(monkeypatch):
-    dispatched = await _run_gitlab_note_webhook(monkeypatch, "/ask why is this null?", note_type="DiffNote")
+@pytest.mark.parametrize("command", ["/ask", "/ask_question", "/ASK", "/ask_line", "/ASK_LINE"])
+async def test_gitlab_diffnote_starting_with_ask_still_routes_to_ask_line(monkeypatch, command):
+    dispatched = await _run_gitlab_note_webhook(monkeypatch, f"{command} why is this null?", note_type="DiffNote")
 
     assert len(dispatched) == 1
     _url, body = dispatched[0]
@@ -158,7 +161,7 @@ async def test_github_line_review_mentioning_ask_stays_review(monkeypatch):
     handled = []
 
     class FakeAgent:
-        async def handle_request(self, api_url, body, notify=None, propagate_tool_errors=False):
+        async def handle_request(self, api_url, body, notify=None, propagate_command_errors=False):
             handled.append((api_url, body))
             return True
 
@@ -204,7 +207,7 @@ async def test_github_line_comment_prefixing_ask_is_not_rewritten_to_ask_line(mo
     handled = []
 
     class FakeAgent:
-        async def handle_request(self, api_url, body, notify=None, propagate_tool_errors=False):
+        async def handle_request(self, api_url, body, notify=None, propagate_command_errors=False):
             handled.append((api_url, body))
             return True
 
@@ -247,36 +250,209 @@ async def test_github_line_comment_prefixing_ask_is_not_rewritten_to_ask_line(mo
     )]
 
 
-async def _run_bitbucket_comment_webhook(monkeypatch, comment_body):
+FILE_QUESTION_CONTEXT_KEYS = (
+    "file_question_path", "file_question_comment_id", "file_question_origin_comment_id", "file_question_comment_url",
+)
+
+
+@pytest.mark.parametrize(("subject_type", "command", "in_reply_to_id"), [
+    ("file", "/ask", None), ("file", "/ask_question", None), ("file", "/ASK", 456), ("file", "/ask_line", None),
+    ("line", "/ask", None), ("line", "/ask_line", None),
+])
+async def test_github_review_comment_question_routes_as_in_the_action(
+    monkeypatch, subject_type, command, in_reply_to_id
+):
+    question = "Explain --config.publish_output=false in this code"
+    handled = []
+    reactions = []
+
+    class FakeAgent:
+        async def handle_request(self, api_url, body, notify=None, propagate_command_errors=False):
+            notify()
+            handled.append((body, {key: context.get(key) for key in FILE_QUESTION_CONTEXT_KEYS}))
+            return True
+
+    class FakeProvider:
+        def add_eyes_reaction(self, comment_id, disable_eyes=False):
+            reactions.append((comment_id, disable_eyes))
+
+        def react_to_outcome(self, comment_id, succeeded):
+            return None
+
+    class EligibleIdentityProvider:
+        def verify_eligibility(self, *_args):
+            return Eligibility.ELIGIBLE
+
+    comment = {
+        "body": f"{command} {question}",
+        "id": 123,
+        "in_reply_to_id": in_reply_to_id,
+        "html_url": "https://github.com/org/repo/pull/1#discussion_r123",
+        "pull_request_url": "https://api.github.com/repos/org/repo/pulls/1",
+        "subject_type": subject_type,
+        "start_line": 10,
+        "line": 12,
+        "diff_hunk": "@@ -1,3 +1,4 @@\n+new line",
+        "path": "src/app.py",
+        "side": "RIGHT",
+    }
+    if subject_type == "file":
+        # GitHub sends a comment on a whole file with a placeholder line 1 and an empty diff hunk.
+        comment.update(start_line=None, line=1, original_line=1, diff_hunk="")
+
+    monkeypatch.setattr(github_app, "get_git_provider_with_context", lambda **_kwargs: FakeProvider())
+    monkeypatch.setattr(github_app, "get_identity_provider", EligibleIdentityProvider)
+
+    with request_cycle_context({"settings": copy.deepcopy(global_settings)}):
+        await github_app.handle_comments_on_pr(
+            {"action": "created", "comment": comment}, "pull_request_review_comment", "human-user", "42",
+            "created", {}, FakeAgent())
+
+    [(request, file_question)] = handled
+    if subject_type == "file" and command.lower() != "/ask_line":
+        # A question on a whole file is asked about that file and answered in its thread, as in the Action.
+        assert request[0] == "/ask"
+        assert decode_user_text_args(request[1:]) == question
+        assert file_question == {
+            "file_question_path": "src/app.py",
+            "file_question_comment_id": in_reply_to_id or 123,
+            "file_question_origin_comment_id": 123,
+            "file_question_comment_url": "https://github.com/org/repo/pull/1#discussion_r123",
+        }
+    else:
+        start, end = (1, 1) if subject_type == "file" else (10, 12)
+        assert request == [
+            "/ask_line", f"--line_start={start}", f"--line_end={end}", "--side=RIGHT",
+            "--file_name=src/app.py", "--comment_id=123", question,
+        ]
+        assert file_question == dict.fromkeys(FILE_QUESTION_CONTEXT_KEYS)
+    # No eyes reaction: the provider adds it through the issue comment endpoint, which has no review comments.
+    assert reactions == [(123, True)]
+
+
+@pytest.mark.parametrize(("overrides", "missing_field"), [
+    ({"path": None}, None),
+    ({"path": ""}, None),
+    ({"path": "   "}, None),
+    ({"path": 123}, None),
+    ({}, "path"),
+])
+async def test_github_file_question_rejects_invalid_path(monkeypatch, overrides, missing_field):
+    comment = {
+        "body": "/ask Why this file?",
+        "subject_type": "file",
+        "path": "src/app.py",
+        "id": 123,
+        "in_reply_to_id": 456,
+        "html_url": "https://github.com/org/repo/pull/1#discussion_r123",
+        "pull_request_url": "https://api.github.com/repos/org/repo/pulls/1",
+    }
+    comment.update(overrides)
+    if missing_field:
+        comment.pop(missing_field)
+
+    def unexpected_provider(**_kwargs):
+        pytest.fail("Invalid file questions must not reach the agent")
+
+    monkeypatch.setattr(github_app, "get_git_provider_with_context", unexpected_provider)
+
+    with request_cycle_context({}):
+        # The Action calls this same helper and stops processing when it raises.
+        with pytest.raises(ValueError, match="Invalid file-level review comment metadata"):
+            handle_file_question_comment({"comment": comment}, comment["body"])
+        assert all(context.get(key) is None for key in FILE_QUESTION_CONTEXT_KEYS)
+
+        # The App must not continue with an unscoped /ask after catching the error.
+        await github_app.handle_comments_on_pr(
+            {"action": "created", "comment": comment}, "pull_request_review_comment", "human-user", "42",
+            "created", {}, mock.AsyncMock(),
+        )
+        assert all(context.get(key) is None for key in FILE_QUESTION_CONTEXT_KEYS)
+
+
+@pytest.mark.parametrize(("subject_type", "command"), [
+    ("file", "/ask_line"),
+    ("line", "/ask"),
+    ("line", "/ask_line"),
+])
+async def test_github_review_comment_context_error_does_not_dispatch(monkeypatch, subject_type, command):
+    comment = {
+        "body": f"{command} Why this line?",
+        "subject_type": subject_type,
+        "id": 123,
+        "start_line": None,
+        "line": 1,
+        "diff_hunk": "",
+        "side": "RIGHT",
+        "pull_request_url": "https://api.github.com/repos/org/repo/pulls/1",
+        # Missing path causes handle_line_comments to fail.
+    }
+
+    def unexpected_provider(**_kwargs):
+        pytest.fail("Malformed review comment must not be dispatched")
+
+    monkeypatch.setattr(github_app, "get_git_provider_with_context", unexpected_provider)
+    with request_cycle_context({"settings": copy.deepcopy(global_settings)}):
+        await github_app.handle_comments_on_pr(
+            {"action": "created", "comment": comment}, "pull_request_review_comment", "human-user", "42",
+            "created", {}, mock.AsyncMock(),
+        )
+        assert all(context.get(key) is None for key in FILE_QUESTION_CONTEXT_KEYS)
+
+
+async def _run_bitbucket_comment_webhook(
+    monkeypatch, comment_body, *, event="pullrequest:comment_created", bot=False, process_pr=True, token_error=None
+):
     dispatched = []
+    work = {"tokens": 0, "settings_clones": 0, "agents": 0}
     payload = {
-        "event": "pullrequest:comment_created",
+        "event": event,
         "data": {
             "actor": {"type": "user", "account_id": "account"},
             "pullrequest": {"links": {"html": {"href": "https://example.test/pr/1"}}},
             "comment": {"content": {"raw": comment_body}},
         },
     }
+    if event not in ("pullrequest:created", "pullrequest:updated", "pullrequest:comment_created"):
+        payload["data"] = {"actor": payload["data"]["actor"]}
     secret_provider = type(
         "SecretProvider",
         (),
         {"get_secret": lambda self, _key: json.dumps({"shared_secret": "secret"})},
     )()
 
-    async def get_bearer_token(_shared_secret, _client_key):
+    async def get_bearer_token(shared_secret, client_key):
+        assert (shared_secret, client_key) == ("secret", "client")
+        work["tokens"] += 1
+        if token_error:
+            raise token_error
         return "bearer"
 
+    def clone_settings(settings):
+        work["settings_clones"] += 1
+        return copy.deepcopy(settings)
+
     class FakeAgent:
+        def __init__(self):
+            work["agents"] += 1
+
         async def handle_request(self, pr_url, command, notify=None):
             dispatched.append((pr_url, command))
+
+    async def perform_commands(category, agent, pr_url, _log_context, _data):
+        assert isinstance(agent, FakeAgent)
+        dispatched.append((pr_url, category))
 
     class EligibleIdentityProvider:
         def verify_eligibility(self, *_args):
             return Eligibility.ELIGIBLE
 
-    monkeypatch.setattr(bitbucket_app, "is_bot_user", lambda _data: False)
+    monkeypatch.setattr(bitbucket_app, "is_bot_user", lambda _data: bot)
+    monkeypatch.setattr(bitbucket_app, "should_process_pr_logic", lambda _data: process_pr)
     monkeypatch.setattr(bitbucket_app, "get_fork_safe_secret_provider", lambda: secret_provider)
     monkeypatch.setattr(bitbucket_app, "get_bearer_token", get_bearer_token)
+    monkeypatch.setattr(bitbucket_app, "copy", mock.Mock(deepcopy=clone_settings))
+    monkeypatch.setattr(bitbucket_app, "_perform_commands_bitbucket", perform_commands)
     monkeypatch.setattr(
         bitbucket_app.jwt,
         "decode",
@@ -295,21 +471,66 @@ async def _run_bitbucket_comment_webhook(monkeypatch, comment_body):
             await background_tasks()
     finally:
         global_settings.set("BITBUCKET", original_bitbucket)
-    return result, dispatched
+    return result, dispatched, work
 
 
-async def test_bitbucket_app_plain_comment_does_not_dispatch(monkeypatch):
-    result, dispatched = await _run_bitbucket_comment_webhook(monkeypatch, "review looks good to me")
+@pytest.mark.parametrize("comment_body", ["review looks good to me", "   "])
+async def test_bitbucket_app_plain_comment_does_not_dispatch(monkeypatch, comment_body):
+    result, dispatched, work = await _run_bitbucket_comment_webhook(monkeypatch, comment_body)
 
     assert result == "OK"
     assert dispatched == []
+    assert work == {"tokens": 0, "settings_clones": 0, "agents": 0}
 
 
-async def test_bitbucket_app_slash_command_dispatches(monkeypatch):
-    result, dispatched = await _run_bitbucket_comment_webhook(monkeypatch, "/review focus on tests")
+@pytest.mark.parametrize("command", ["/review focus on tests", "  /improve  ", "/unknown-command"])
+async def test_bitbucket_app_slash_command_dispatches(monkeypatch, command):
+    result, dispatched, work = await _run_bitbucket_comment_webhook(monkeypatch, command)
 
     assert result == "OK"
-    assert dispatched == [("https://example.test/pr/1", "/review focus on tests")]
+    assert dispatched == [("https://example.test/pr/1", command)]
+    assert work == {"tokens": 1, "settings_clones": 1, "agents": 1}
+
+
+async def test_bitbucket_app_unsupported_event_skips_oauth_and_setup(monkeypatch):
+    result, dispatched, work = await _run_bitbucket_comment_webhook(monkeypatch, None, event="repo:push")
+
+    assert result == "OK"
+    assert dispatched == []
+    assert work == {"tokens": 0, "settings_clones": 0, "agents": 0}
+
+
+@pytest.mark.parametrize(("event", "category"), [
+    ("pullrequest:created", "pr_commands"),
+    ("pullrequest:updated", "push_commands"),
+])
+async def test_bitbucket_app_actionable_event_keeps_oauth_and_dispatch(monkeypatch, event, category):
+    result, dispatched, work = await _run_bitbucket_comment_webhook(monkeypatch, None, event=event)
+
+    assert result == "OK"
+    assert dispatched == [("https://example.test/pr/1", category)]
+    assert work == {"tokens": 1, "settings_clones": 1, "agents": 1}
+
+
+@pytest.mark.parametrize("gate", ["bot", "created-policy"])
+async def test_bitbucket_app_existing_gate_still_skips_oauth(monkeypatch, gate):
+    result, dispatched, work = await _run_bitbucket_comment_webhook(
+        monkeypatch, None, event="pullrequest:created", bot=gate == "bot", process_pr=gate != "created-policy"
+    )
+
+    assert result == "OK"
+    assert dispatched == []
+    assert work == {"tokens": 0, "settings_clones": 0, "agents": 0}
+
+
+async def test_bitbucket_app_actionable_token_failure_does_not_dispatch(monkeypatch):
+    result, dispatched, work = await _run_bitbucket_comment_webhook(
+        monkeypatch, "/review", token_error=RuntimeError("token unavailable")
+    )
+
+    assert result == "OK"
+    assert dispatched == []
+    assert work == {"tokens": 1, "settings_clones": 0, "agents": 0}
 
 
 async def _run_bitbucket_server_comment_webhook(monkeypatch, comment_text):

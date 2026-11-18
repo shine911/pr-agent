@@ -6,8 +6,8 @@ import pytest
 from pr_agent.agent.pr_agent import command2class
 from pr_agent.algo.ocr_config import build_ocr_rules, ocr_config_cli_invocation
 from pr_agent.algo.run_details import command_failed, init_run_details
+from pr_agent.commands.pr_ocr_config import PROcrConfig
 from pr_agent.config_loader import get_settings
-from pr_agent.tools.pr_ocr_config import PROcrConfig
 
 MR_URL = "https://gitlab.example/g/p/-/merge_requests/1"
 _KEYS = [

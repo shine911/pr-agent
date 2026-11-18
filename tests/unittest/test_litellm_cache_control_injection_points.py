@@ -355,9 +355,12 @@ async def test_no_warning_without_cache_metadata_but_call_proceeds(monkeypatch):
 
 
 def test_estimate_counts_prompt_prefix_up_to_targeted_message(monkeypatch):
+    encoded = []
+
     class _FakeEncoder:
         @staticmethod
         def encode(text, **kwargs):
+            encoded.append(text)
             return [1] * ((len(text) if text else 0) // 2 + 1)
 
     monkeypatch.setattr(
@@ -369,7 +372,9 @@ def test_estimate_counts_prompt_prefix_up_to_targeted_message(monkeypatch):
     system_only = handler._estimate_cached_prefix_tokens(
         "pineapple", "banana", [{"location": "message", "role": "system"}]
     )
+    assert encoded == ["pineapple"]
     user_only = handler._estimate_cached_prefix_tokens("pineapple", "banana", [{"location": "message", "role": "user"}])
+    assert encoded == ["pineapple", "pineapple", "banana"]
 
     # Caching the user message also caches the system message that precedes it, so its
     # estimate must be strictly larger than the system-only one.
@@ -384,7 +389,7 @@ def test_estimate_is_zero_without_targeted_role(monkeypatch):
     assert handler._estimate_cached_prefix_tokens("pineapple", "banana", []) == 0
 
 
-# The review tools open their system prompt with an identical skills block, so the handler
+# The review commands open their system prompt with an identical skills block, so the handler
 # splits it into its own text block and marks it as a cache breakpoint (#4007). The blocks
 # concatenate back to the original prompt.
 _SKILLS_CONTROL = {"type": "ephemeral", "ttl": "1h"}
