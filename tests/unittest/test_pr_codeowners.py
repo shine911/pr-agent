@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pr_agent.tools.pr_codeowners import MARKER_PREFIX, PRCodeOwners
+from pr_agent.commands.pr_codeowners import MARKER_PREFIX, PRCodeOwners
 
 CODEOWNERS_TEXT = "*.py @alice\n/infra/ @ops-group\n*.md @docs-lead"
 
@@ -29,8 +29,8 @@ def _provider(paths, approvers, groups=None, codeowners=CODEOWNERS_TEXT, thread_
 
 
 def _run(provider, settings=None):
-    with patch("pr_agent.tools.pr_codeowners.get_git_provider", return_value=lambda pr_url: provider), \
-            patch("pr_agent.tools.pr_codeowners.get_settings", return_value=settings or _settings()):
+    with patch("pr_agent.commands.pr_codeowners.get_git_provider", return_value=lambda pr_url: provider), \
+            patch("pr_agent.commands.pr_codeowners.get_settings", return_value=settings or _settings()):
         tool = PRCodeOwners("https://gitlab.example.com/group/project/-/merge_requests/1")
         return asyncio.run(tool.run())
 

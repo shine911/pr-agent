@@ -4,18 +4,22 @@ import contextlib
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import shutil  # noqa: F401  (module attribute asserted by tests)
 import stat
 import threading
+import uuid
+from urllib.parse import urlparse
 
 import aiohttp
 import httpx
 import litellm
 import openai
 from litellm import acompletion
-from tenacity import retry, retry_if_exception, stop_after_attempt
+from litellm.exceptions import MidStreamFallbackError
+from tenacity import RetryCallState, retry, retry_if_exception, wait_random_exponential
 
 try:
     from litellm.llms.anthropic.common_utils import AnthropicModelInfo
@@ -138,9 +142,11 @@ from pr_agent.algo.ai_handlers.litellm_helpers import (
     _response_field,
     get_repetition_penalty,
 )
+from pr_agent.algo.instruction_context import append_protected_system_instructions
 from pr_agent.algo.prompt_fragments import render_skills_prefix
 from pr_agent.algo.run_details import _as_decimal_cost, record_ai_call
 from pr_agent.algo.run_output import get_version
+from pr_agent.algo.setting_utils import _as_bool_setting, normalize_setting_list
 from pr_agent.algo.skills_loader import get_skills_context
 from pr_agent.algo.url_safety import with_safe_redirects
 from pr_agent.algo.utils import ReasoningEffort
@@ -148,13 +154,18 @@ from pr_agent.config_loader import get_settings, get_verbosity_level, global_set
 from pr_agent.log import get_logger
 
 MODEL_RETRIES = 2
+DEFAULT_NUM_RETRIES = 4
+# Longest Retry-After honored; a longer one waits with jitter instead.
+MAX_RETRY_AFTER_SECONDS = 30
 # Lowest config.max_output_tokens honored; Bedrock Claude with thinking needs this much to answer.
 MIN_MAX_OUTPUT_TOKENS = 4096
+# Session id for requests without PR context; random so no repository data is sent.
+_PROCESS_SESSION_ID = f"pr-agent-{uuid.uuid4().hex}"
 _IMAGE_HEAD_TIMEOUT_SECONDS = 5
 _IMAGE_NOT_ALIVE_MESSAGE = (
     "The image link is not [alive](img_path).\n"
     "Please repost the original image as a comment, and send the question again with 'quote reply' "
-    "(see [instructions](https://docs.pr-agent.ai/tools/ask/#ask-on-images))."
+    "(see [instructions](https://docs.pr-agent.ai/commands/ask/#ask-on-images))."
 )
 OPENAI_DEFAULT_API_BASE = "https://api.openai.com/v1"
 
@@ -188,6 +199,7 @@ PROVIDER_SETTING_PATHS = {
     "mistral": {"api_key": "MISTRAL.KEY"},
     "moonshot": {"api_key": "MOONSHOT.KEY", "api_base": "MOONSHOT.API_BASE"},
     "ollama": {"api_key": "OLLAMA.API_KEY", "api_base": "OLLAMA.API_BASE"},
+    "opencode_go": {"api_key": "OPENCODE_GO.KEY"},
     "openrouter": {"api_key": "OPENROUTER.KEY", "api_base": "OPENROUTER.API_BASE"},
     "replicate": {"api_key": "REPLICATE.KEY"},
     "sambanova": {"api_key": "SAMBANOVA.KEY"},
@@ -222,12 +234,8 @@ def _strip_openai_azure_prefixes(model: str) -> str:
 
 
 def _as_bool(value, default: bool) -> bool:
-    """Parse a config value that may arrive as a bool (toml) or a string (env override)."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in ("true", "1", "yes", "on")
-    return default
+    """Preserve the old invalid-string fallback while accepting integer flags."""
+    return _as_bool_setting(value, default=False if isinstance(value, str) else default)
 
 
 def _as_list(value) -> list:
@@ -263,8 +271,14 @@ def _coerce_string_list_config(value):
     return None
 
 
+MAX_CONFIG_NUM_RETRIES = 10
+
+
 def _configured_client_retries():
-    """config.num_retries as a non-negative int, or None (unset/invalid = client defaults).
+    """config.num_retries as a non-negative int (unset/invalid = DEFAULT_NUM_RETRIES).
+
+    It is the number of same-model retries of a rejected request (see _is_rejected_request); the
+    completion client's own retries are always off, so this handler's retry is the only layer.
 
     Invalid values are logged and ignored rather than raised: this is read on the request
     path, and a config typo should not fail the run nor be wrapped and retried as an API
@@ -272,15 +286,20 @@ def _configured_client_retries():
     """
     value = get_settings().config.get("num_retries", None)
     if value is None:
-        return None
+        return DEFAULT_NUM_RETRIES
     try:
         parsed = int(str(value).strip())
     except ValueError:
         get_logger().warning(f"Ignoring invalid config.num_retries: {value!r}")
-        return None
+        return DEFAULT_NUM_RETRIES
     if parsed < 0:
         get_logger().warning(f"Ignoring negative config.num_retries: {parsed}")
-        return None
+        return DEFAULT_NUM_RETRIES
+    if parsed > MAX_CONFIG_NUM_RETRIES:
+        get_logger().warning(
+            f"Clamping config.num_retries from {parsed} to {MAX_CONFIG_NUM_RETRIES}"
+        )
+        return MAX_CONFIG_NUM_RETRIES
     return parsed
 
 
@@ -294,7 +313,6 @@ def _should_retry_same_model(exc: BaseException) -> bool:
     not replayed unless config.retry_same_model_on_length enables it.
     """
     if isinstance(exc, (
-        openai.RateLimitError,
         openai.BadRequestError,
         openai.UnprocessableEntityError,
         openai.AuthenticationError,
@@ -306,6 +324,61 @@ def _should_retry_same_model(exc: BaseException) -> bool:
     if isinstance(exc, EmptyTruncatedResponseError):
         return _as_bool(get_settings().config.get("retry_same_model_on_length", False), default=False)
     return isinstance(exc, openai.APIError)
+
+
+def _is_rejected_request(exc: BaseException) -> bool:
+    """A 429, a 5xx answer or a connection error, worth replaying after a wait. A 200 that failed to
+    parse also reaches here as a 5xx or APIConnectionError, but with no answer and no transport error."""
+    if not isinstance(exc, openai.APIError):
+        return False
+    if isinstance(exc, (openai.APITimeoutError, MidStreamFallbackError)):
+        return False
+    if isinstance(exc, openai.RateLimitError):
+        return True
+    status_code = getattr(exc, "status_code", None)
+    answered = getattr(exc, "litellm_response_headers", None) is not None
+    if isinstance(status_code, int) and status_code >= 500 and answered:
+        return True
+    cause = exc.__cause__ or exc.__context__
+    while cause is not None:
+        if isinstance(cause, httpx.TransportError) and not isinstance(cause, httpx.TimeoutException):
+            return True
+        cause = cause.__cause__ or cause.__context__
+    return False
+
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    """A finite, positive Retry-After of at most MAX_RETRY_AFTER_SECONDS, in seconds, or None."""
+    headers = getattr(exc, "litellm_response_headers", None)
+    if not headers:
+        return None
+    value = next((v for k, v in headers.items() if k.lower() == "retry-after"), None)
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(seconds) or seconds <= 0 or seconds > MAX_RETRY_AFTER_SECONDS:
+        return None
+    return seconds
+
+
+def _stop_same_model_retries(retry_state: RetryCallState) -> bool:
+    """Stop after config.num_retries retries of a rejected request, or MODEL_RETRIES attempts otherwise."""
+    if _is_rejected_request(retry_state.outcome.exception()):
+        return retry_state.attempt_number > _configured_client_retries()
+    return retry_state.attempt_number >= MODEL_RETRIES
+
+
+def _same_model_retry_wait(retry_state: RetryCallState) -> float:
+    """Wait the provider's Retry-After, or exponential backoff with jitter, before replaying a rejected
+    request. Timeouts and empty responses are replayed at once, as before."""
+    exc = retry_state.outcome.exception()
+    if not _is_rejected_request(exc):
+        return 0
+    retry_after = _retry_after_seconds(exc)
+    if retry_after is not None:
+        return retry_after
+    return wait_random_exponential(multiplier=1, max=20)(retry_state)
 
 
 def _log_anthropic_cache_warning(model: str, reason: str) -> None:
@@ -512,19 +585,27 @@ class LiteLLMAIHandler(BaseAiHandler):
 
         if global_settings.get("LITELLM.DISABLE_AIOHTTP", False):
             litellm.disable_aiohttp_transport = True
+        # LiteLLM prints a "Give Feedback / Get Help" banner to stdout for every mapped provider error.
+        if _as_bool_setting(
+            global_settings.get("LITELLM.SUPPRESS_DEBUG_INFO", True),
+            default=True, setting_name="LITELLM.SUPPRESS_DEBUG_INFO",
+        ):
+            litellm.suppress_debug_info = True
         self._initialize_aws_request_credentials(settings)
         # LiteLLM callbacks are process globals, so only deployment settings may set them.
         if global_settings.get("LITELLM.SUCCESS_CALLBACK", None):
-            litellm.success_callback = global_settings.litellm.success_callback
+            litellm.success_callback = normalize_setting_list(global_settings.litellm.success_callback)
         if global_settings.get("LITELLM.FAILURE_CALLBACK", None):
-            litellm.failure_callback = global_settings.litellm.failure_callback
+            litellm.failure_callback = normalize_setting_list(global_settings.litellm.failure_callback)
         if global_settings.get("LITELLM.SERVICE_CALLBACK", None):
-            litellm.service_callback = global_settings.litellm.service_callback
+            litellm.service_callback = normalize_setting_list(global_settings.litellm.service_callback)
         # litellm callbacks attach full prompt and response content unless message logging is disabled.
         if settings.get("LITELLM.TURN_OFF_MESSAGE_LOGGING", False):
             litellm.turn_off_message_logging = True
         # Keep LiteLLM request spans separate from pr-agent command spans when both OTEL layers are enabled.
-        if self._litellm_otel_callback_enabled() and settings.get("OTEL.IS_ENABLED", False):
+        if self._litellm_otel_callback_enabled() and _as_bool_setting(
+            settings.get("OTEL.IS_ENABLED", False), setting_name="OTEL.IS_ENABLED"
+        ):
             os.environ.setdefault("USE_OTEL_LITELLM_REQUEST_SPAN", "true")
         repetition_penalty = get_repetition_penalty()
         if repetition_penalty is not None:
@@ -1830,7 +1911,10 @@ class LiteLLMAIHandler(BaseAiHandler):
         )
 
     def prepare_logs(self, response, system, user, resp, finish_reason):
-        response_log = response.dict().copy()
+        if hasattr(response, "model_dump"):
+            response_log = response.model_dump().copy()
+        else:
+            response_log = response.dict().copy()
         response_log['system'] = system
         response_log['user'] = user
         response_log['output'] = resp
@@ -2401,6 +2485,7 @@ class LiteLLMAIHandler(BaseAiHandler):
         image_path: str | None = None,
     ) -> list[dict]:
         """Build the exact message payload for normalized prompt strings."""
+        system_prompt = append_protected_system_instructions(system_prompt)
         combine_prompts = (
             self._uses_user_message_only(model)
             or get_settings().config.custom_reasoning_model
@@ -2487,7 +2572,7 @@ class LiteLLMAIHandler(BaseAiHandler):
         """Return whether a Claude model requires the adaptive thinking API."""
         normalized_model = model.lower().replace("_", "-").replace(".", "-")
         return re.search(
-            r"claude-(?:opus-4-(?:7|8)|(?:opus|sonnet|fable)-5)(?:[^0-9]|$)",
+            r"claude-(?:opus-4-(?:7|8)|(?:opus|sonnet|fable)-5|haiku-5-5)(?:[^0-9]|$)",
             normalized_model,
         ) is not None
 
@@ -2611,7 +2696,7 @@ class LiteLLMAIHandler(BaseAiHandler):
             return ""
         # Cap the individual values before serialization, so the result stays
         # valid JSON: slicing the serialized string could cut through closing
-        # quotes and braces. 30 chars cover every tool command; 200 chars of
+        # quotes and braces. 30 chars cover every command; 200 chars of
         # pr_url keep the total under 256 with the JSON overhead.
         for key, max_len in (("command", 30), ("pr_url", 200)):
             value = context.get(key)
@@ -2619,12 +2704,97 @@ class LiteLLMAIHandler(BaseAiHandler):
                 context[key] = value[:max_len]
         return json.dumps(context, separators=(",", ":"))
 
+    def _add_request_session_id(self, kwargs: dict) -> None:
+        """Group every command run against the same PR into one LiteLLM session.
+
+        Sends the proxy's session id header and passes the same value as
+        litellm_session_id. Explicitly configured headers win, so an operator
+        can override the value.
+        """
+        if not get_settings().litellm.get("add_session_id_to_requests", False):
+            return
+        headers = dict(kwargs.get("headers") or {})
+        session_id = next(
+            (value for name, value in headers.items() if name.lower() == "x-litellm-session-id"), None,
+        )
+        if session_id is None:
+            session_id = self._get_request_session_id()
+            headers["x-litellm-session-id"] = session_id
+            kwargs["headers"] = headers
+        # The SDK derives provider session headers, such as OpenCode Go's
+        # required x-opencode-session, from this parameter, not the proxy header.
+        # Reusing an explicit header keeps the proxy and the provider on one session.
+        kwargs["litellm_session_id"] = session_id
+
+    def _get_request_session_id(self) -> str:
+        """Build a stable LiteLLM session id.
+
+        LiteLLM stores this value in the session_id column of its spend logs, so
+        every command run against the same PR shares one session. The header only
+        accepts alphanumerics, hyphens and underscores, so the URL is normalized
+        to that character set. Without PR context (doctor pings, health probes)
+        returns a per-process id, since providers such as OpenCode Go reject
+        requests without one.
+        """
+        context = self._capture_log_context(
+            "session_id_probe", "Capturing the request context for the session id",
+        )
+        pr_url = context.get("pr_url")
+        if not isinstance(pr_url, str) or not pr_url:
+            return _PROCESS_SESSION_ID
+        parsed = urlparse(pr_url)
+        raw = f"{parsed.netloc.rpartition('@')[2]}{parsed.path}" if parsed.netloc else pr_url
+        slug = re.sub(r"[^A-Za-z0-9_-]+", "-", raw)
+        slug = re.sub(r"-{2,}", "-", slug).strip("-_").lower()
+        if not slug:
+            return _PROCESS_SESSION_ID
+        # Different URLs can normalize to the same slug, and long repository
+        # paths can push the PR number past the cutoff. Append a digest of the
+        # raw URL and reserve room for it before truncating the readable part,
+        # so unrelated PRs never share a session. The "pr-agent-" prefix also
+        # keeps the id above LiteLLM's 8-character minimum.
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+        prefix = "pr-agent-"
+        slug_budget = 128 - len(prefix) - len(digest) - 1
+        slug = slug[:slug_budget].rstrip("-_")
+        return f"{prefix}{slug}-{digest}"
+
     @property
     def deployment_id(self):
         """
         Returns the deployment ID for the OpenAI API.
         """
         return get_settings().get("OPENAI.DEPLOYMENT_ID", None)
+
+    def prompt_cache_active(self, model: str, *, prompt_tokens: int | None = None) -> bool:
+        """Whether the shared-prefix prompt cache will apply to this model's calls.
+
+        The chunk runners stagger their first call when it is, so sibling chunks read
+        the cache entry the first one writes instead of each writing their own (#4876).
+        Uses the same gates as the request path: injection points configured, a model
+        that honors them, and — when the caller knows the shared prompt's token count —
+        a prefix that clears the model's ``prompt_cache_min_tokens``. Below that
+        minimum Anthropic silently does not cache, so staggering would only add
+        latency. Best effort like the call-time warning: a missing token count or a
+        metadata gap skips the length check, never the call.
+        """
+        points = self._resolve_cache_control_injection_points()
+        # A role: user or index: -1 point caches through the chunk's own diff, so
+        # siblings can never read it and the stagger only adds latency; gate on a
+        # system point to keep it to the shared prefix.
+        if not any(isinstance(point, dict) and point.get("role") == "system" for point in points or []):
+            return False
+        if not self._is_claude_model(model):
+            return False
+        if prompt_tokens is not None:
+            try:
+                min_tokens = litellm.get_model_info(model).get("prompt_cache_min_tokens")
+            except Exception:
+                return True
+            if isinstance(min_tokens, int) and not isinstance(min_tokens, bool) and min_tokens > 0:
+                if prompt_tokens < min_tokens:
+                    return False
+        return True
 
     @staticmethod
     def _resolve_cache_control_injection_points():
@@ -2651,13 +2821,42 @@ class LiteLLMAIHandler(BaseAiHandler):
             raise ValueError("LITELLM.CACHE_CONTROL_INJECTION_POINTS must be a JSON/TOML array")
         return cache_control_injection_points
 
+    @staticmethod
+    def _resolve_bedrock_guardrail_config():
+        """Build the Bedrock Converse ``guardrailConfig`` from the [bedrock] settings.
+
+        Returns None when no guardrail is configured. Raises ValueError on an incomplete or invalid
+        configuration so it surfaces as a config error instead of being retried.
+        """
+        identifier = str(get_settings().get("BEDROCK.GUARDRAIL_IDENTIFIER", "") or "").strip()
+        version = str(get_settings().get("BEDROCK.GUARDRAIL_VERSION", "") or "").strip()
+        trace = str(get_settings().get("BEDROCK.GUARDRAIL_TRACE", "") or "disabled").strip().lower()
+        if not identifier and not version:
+            return None
+        if not identifier or not version:
+            raise ValueError("BEDROCK.GUARDRAIL_IDENTIFIER and BEDROCK.GUARDRAIL_VERSION must be set together")
+        if trace not in ("enabled", "enabled_full", "disabled"):
+            raise ValueError("BEDROCK.GUARDRAIL_TRACE must be one of: enabled, enabled_full, disabled")
+        return {"guardrailIdentifier": identifier, "guardrailVersion": version, "trace": trace}
+
+    @staticmethod
+    def _check_bedrock_guardrail_route(guardrail_config, model: str, request_provider: str | None) -> None:
+        """Fail closed for Bedrock routes that would silently drop the guardrail."""
+        if not guardrail_config:
+            return
+        # Unprefixed Bedrock models fall back to LiteLLM's version-dependent route inference (e.g. InvokeModel).
+        if request_provider == "bedrock_mantle" or (
+            request_provider == "bedrock" and not model.removeprefix("bedrock/").startswith("converse/")
+        ):
+            raise ValueError("Bedrock guardrails require the Converse route; use a 'bedrock/converse/' model")
+
     def _split_system_prompt_for_skills_cache(self, messages: list[dict], model: str, injection_points) -> None:
         """Add a cache breakpoint at the end of the shared skills prefix (#4007).
 
-        The review tools open their system prompts with an identical skills block, so marking
+        The review commands open their system prompts with an identical skills block, so marking
         that block lets Anthropic read one cache entry across /review, /describe and /improve
-        instead of writing one per tool. The tool-specific remainder keeps its own breakpoint
-        rather than losing it, so a tool that repeats still reads its whole system prompt; the
+        instead of writing one per command. The command-specific remainder keeps its own breakpoint
+        rather than losing it, so a command that repeats still reads its whole system prompt; the
         price is a second breakpoint slot of the four Anthropic allows, not a smaller cache.
         Only applies to Anthropic Claude models when a configured injection point targets the
         system message and the rendered prefix matches; every other request keeps the plain
@@ -2756,7 +2955,7 @@ class LiteLLMAIHandler(BaseAiHandler):
 
             encoder = TokenEncoder.get_token_encoder("anthropic/claude")
             system_tokens = len(encoder.encode(system or "", disallowed_special=()))
-            user_tokens = len(encoder.encode(user or "", disallowed_special=()))
+            user_tokens = len(encoder.encode(user or "", disallowed_special=())) if targets_user else 0
         except Exception:
             system_tokens = len(system or "") // 4
             user_tokens = len(user or "") // 4
@@ -2806,7 +3005,8 @@ class LiteLLMAIHandler(BaseAiHandler):
 
     @retry(
         retry=retry_if_exception(_should_retry_same_model),
-        stop=stop_after_attempt(MODEL_RETRIES),
+        stop=_stop_same_model_retries,
+        wait=_same_model_retry_wait,
         reraise=True,  # surface the provider's error; RetryError hides the reason
     )
     async def _chat_completion_with_retry(
@@ -2822,12 +3022,13 @@ class LiteLLMAIHandler(BaseAiHandler):
         # Validate config-derived kwargs before the try/except below, so a malformed value raises a
         # ValueError config error instead of being wrapped as openai.APIError and retried.
         cache_control_injection_points = self._resolve_cache_control_injection_points()
-        client_retries = _configured_client_retries()
+        bedrock_guardrail_config = self._resolve_bedrock_guardrail_config()
         custom_llm_provider = self._custom_llm_provider
         user_model = model
         routed_model = self._route_model_for_request(user_model, custom_llm_provider, configured_deployment_id)
         completion_model = self._normalize_gpt5_model_for_request(routed_model, user_model, custom_llm_provider)
         request_provider = self._resolve_configured_request_provider(routed_model, custom_llm_provider)
+        self._check_bedrock_guardrail_route(bedrock_guardrail_config, completion_model, request_provider)
         deployment_id = self._request_deployment_id(routed_model, request_provider, configured_deployment_id)
         if img_path:
             # Finish external image I/O before validating mutable credential fallbacks.
@@ -3003,19 +3204,17 @@ class LiteLLMAIHandler(BaseAiHandler):
                     kwargs["deployment_id"] = deployment_id
                 kwargs.update(provider_request_params)
 
-                # Caps the completion client's own per-call retries, which otherwise
-                # multiply this handler's retry attempts. Parsed before the request
-                # try/except (see _configured_client_retries).
-                if client_retries is not None:
-                    kwargs["num_retries"] = client_retries
-                    kwargs["max_retries"] = client_retries
+                # The completion client's own retries (LiteLLM's and the OpenAI SDK's) would multiply
+                # this handler's attempts, so they are always off; config.num_retries applies here.
+                kwargs["num_retries"] = 0
+                kwargs["max_retries"] = 0
 
                 # Add temperature only if the model supports it. Support comes from
                 # litellm's parameter metadata (probed over suffix forms, mirroring the
                 # reasoning_effort gate) and config.no_temperature_models as the operator
                 # override for endpoints litellm does not know or providers that reject
                 # temperature despite the metadata. Adaptive-thinking Claude models
-                # (Opus 4.7/4.8 and Opus/Sonnet/Fable 5) never receive it, matching the
+                # (Opus 4.7/4.8, Opus/Sonnet/Fable 5.x and Haiku 5.5) never receive it, matching the
                 # sampling-parameter removal of _configure_claude_adaptive_thinking.
                 # OpenRouter :nitro/:floor routing shortcuts are ignored for temperature
                 # capability checks; model retains the routed id for the actual request.
@@ -3207,6 +3406,14 @@ class LiteLLMAIHandler(BaseAiHandler):
                     kwargs["model_id"] = bedrock_model_id
                     get_logger().info(f"Using Bedrock custom inference profile: {bedrock_model_id}")
 
+                if bedrock_guardrail_config:
+                    if request_provider == "bedrock":
+                        kwargs["guardrailConfig"] = bedrock_guardrail_config
+                    else:
+                        get_logger().debug(
+                            f"Bedrock guardrail configured but not applied: {model} is not a Bedrock model"
+                        )
+
                 # OpenRouter provider routing, reasoning control and output cap.
                 # Registered reasoning models inherit config.reasoning_effort when
                 # no OpenRouter-specific effort or token budget is configured.
@@ -3243,7 +3450,9 @@ class LiteLLMAIHandler(BaseAiHandler):
                 get_logger().error(f"Rate limit error during LLM inference: {e}")
                 raise
             except openai.APIError as e:
-                if aws_can_fallback:
+                if aws_can_fallback and isinstance(
+                    e, (openai.AuthenticationError, openai.PermissionDeniedError),
+                ):
                     if not self._aws_imds_fell_back:
                         self._activate_static_aws_fallback()
                         get_logger().warning(f"{AWS_PROVIDER_CALL_FALLBACK_MESSAGE}: {type(e).__name__}")
@@ -3280,6 +3489,13 @@ class LiteLLMAIHandler(BaseAiHandler):
                     _stream_cleanup=fallback_stream_cleanup, **fallback_kwargs,
                 )
 
+        # Bedrock returns a successful response whose content is the guardrail's block message.
+        if bedrock_guardrail_config and request_provider == "bedrock" and finish_reason == "content_filter":
+            raise ValueError(
+                f"Bedrock guardrail {bedrock_guardrail_config['guardrailIdentifier']} "
+                f"(version {bedrock_guardrail_config['guardrailVersion']}) blocked the {user_model} request"
+            )
+
         # Post-response bookkeeping happens outside the Bedrock IMDS lock above: it
         # touches no os.environ credentials, and in IMDS mode the lock serializes
         # every concurrent call, so holding it through logging and cost pricing
@@ -3300,10 +3516,12 @@ class LiteLLMAIHandler(BaseAiHandler):
 
     async def probe_completion(self, model: str, *, max_tokens: int = 10, timeout: int = 10, _completion=None) -> None:
         """Preserve the single-call health probe using request-local credentials."""
+        bedrock_guardrail_config = self._resolve_bedrock_guardrail_config()
         custom_llm_provider = self._custom_llm_provider
         configured_deployment_id = self.deployment_id
         routed_model = self._route_model_for_request(model, custom_llm_provider, configured_deployment_id)
         request_provider = self._resolve_configured_request_provider(routed_model, custom_llm_provider)
+        self._check_bedrock_guardrail_route(bedrock_guardrail_config, routed_model, request_provider)
         deployment_id = self._request_deployment_id(routed_model, request_provider, configured_deployment_id)
         use_aws_imds = self._should_use_aws_imds(request_provider)
         stream_cleanup = [] if use_aws_imds else None
@@ -3345,6 +3563,8 @@ class LiteLLMAIHandler(BaseAiHandler):
             probe_model_id = self._bedrock_model_id_for(model)
             if probe_model_id and request_provider == "bedrock":
                 kwargs["model_id"] = probe_model_id
+            if bedrock_guardrail_config and request_provider == "bedrock":
+                kwargs["guardrailConfig"] = bedrock_guardrail_config
             streaming = self._requires_streaming(kwargs["model"]) or self._force_streaming_for_request(
                 custom_llm_provider, kwargs.get("api_base")
             )
@@ -3401,7 +3621,7 @@ class LiteLLMAIHandler(BaseAiHandler):
                 )
             content = response["choices"][0]['message']['content']
             finish_reason = response["choices"][0]["finish_reason"]
-            if not content:
+            if not content or (isinstance(content, str) and content.isspace()):
                 get_logger().warning(
                     f"Empty content in model response, finish_reason: {finish_reason}")
                 error_message = f"Empty content in model response (finish_reason: {finish_reason})"
@@ -3424,6 +3644,8 @@ class LiteLLMAIHandler(BaseAiHandler):
     ):
         """Call LiteLLM with any provider compatibility context scoped to this task."""
         _completion = _completion or acompletion
+        # Every completion, including health probes and doctor pings, passes here.
+        self._add_request_session_id(kwargs)
         if getattr(self, "_drop_params", None):
             kwargs.setdefault("drop_params", self._drop_params)
         custom_llm_provider = str(kwargs.get("custom_llm_provider") or "").strip().lower()

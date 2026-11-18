@@ -5,10 +5,10 @@ import pytest
 
 from pr_agent.algo.run_details import init_run_details, record_ai_call, record_model_used
 from pr_agent.algo.types import FilePatchInfo
+from pr_agent.commands.pr_code_suggestions import PRCodeSuggestions
+from pr_agent.commands.pr_description import PRDescription
+from pr_agent.commands.pr_reviewer import PRReviewer
 from pr_agent.config_loader import get_settings
-from pr_agent.tools.pr_code_suggestions import PRCodeSuggestions
-from pr_agent.tools.pr_description import PRDescription
-from pr_agent.tools.pr_reviewer import PRReviewer
 from tests.unittest._settings_helpers import restore_settings, snapshot_settings
 
 _TRACKED_KEYS_REVIEW = (
@@ -66,7 +66,6 @@ def _seed_run_details():
 
 def _seeded_init_run_details():
     _seed_run_details()
-    return None
 
 
 async def _noop_async(*_args, **_kwargs):
@@ -97,12 +96,12 @@ review:
         reviewer.git_provider.is_supported.side_effect = lambda cap: cap == "gfm_markdown"
         reviewer.git_provider.get_diff_files.return_value = []
 
-        # Seeding through the tool's own init hook is what makes this a wiring test:
+        # Seeding through the command's own init hook is what makes this a wiring test:
         # drop init_run_details() from run() and the seed never lands, so the
         # section cannot render and this test fails.
-        monkeypatch.setattr("pr_agent.tools.pr_reviewer.init_run_details", _seeded_init_run_details)
-        monkeypatch.setattr("pr_agent.tools.pr_reviewer.extract_and_cache_pr_tickets", _noop_async)
-        monkeypatch.setattr("pr_agent.tools.pr_reviewer.retry_with_fallback_models", _noop_async)
+        monkeypatch.setattr("pr_agent.commands.pr_reviewer.init_run_details", _seeded_init_run_details)
+        monkeypatch.setattr("pr_agent.commands.pr_reviewer.extract_and_cache_pr_tickets", _noop_async)
+        monkeypatch.setattr("pr_agent.commands.pr_reviewer.retry_with_fallback_models", _noop_async)
 
         get_settings().set("config.publish_output", False)
         get_settings().set("config.is_auto_command", False)
@@ -134,15 +133,16 @@ async def test_pr_description_appends_run_details_only_when_enabled(monkeypatch)
         description.vars = {}
         description.prediction = "prediction"
         description.file_label_dict = {}
+        description.data = {}  # run() hands the parsed dict to the JSON writer after _prepare_data
         description.git_provider = MagicMock()
         description.git_provider.is_supported.side_effect = lambda cap: cap == "gfm_markdown"
 
         description._prepare_data = MagicMock()
         description._prepare_pr_answer = MagicMock(return_value=("AI title", "Base description body", ""))
 
-        monkeypatch.setattr("pr_agent.tools.pr_description.init_run_details", _seeded_init_run_details)
-        monkeypatch.setattr("pr_agent.tools.pr_description.extract_and_cache_pr_tickets", _noop_async)
-        monkeypatch.setattr("pr_agent.tools.pr_description.retry_with_fallback_models", _noop_async)
+        monkeypatch.setattr("pr_agent.commands.pr_description.init_run_details", _seeded_init_run_details)
+        monkeypatch.setattr("pr_agent.commands.pr_description.extract_and_cache_pr_tickets", _noop_async)
+        monkeypatch.setattr("pr_agent.commands.pr_description.retry_with_fallback_models", _noop_async)
 
         get_settings().set("config.publish_output", False)
         get_settings().set("config.is_auto_command", False)
@@ -193,8 +193,8 @@ async def test_pr_code_suggestions_appends_run_details_only_when_enabled(monkeyp
                  "relevant_lines_start": 1, "relevant_lines_end": 1},
             ]}
 
-        monkeypatch.setattr("pr_agent.tools.pr_code_suggestions.init_run_details", _seeded_init_run_details)
-        monkeypatch.setattr("pr_agent.tools.pr_code_suggestions.retry_with_fallback_models", _fake_retry)
+        monkeypatch.setattr("pr_agent.commands.pr_code_suggestions.init_run_details", _seeded_init_run_details)
+        monkeypatch.setattr("pr_agent.commands.pr_code_suggestions.retry_with_fallback_models", _fake_retry)
 
         get_settings().set("config.publish_output", True)
         get_settings().set("config.publish_output_progress", False)
@@ -247,8 +247,8 @@ async def test_pr_code_suggestions_appends_run_details_when_no_suggestions(monke
         async def _fake_retry_empty(*_args, **_kwargs):
             return {"code_suggestions": []}
 
-        monkeypatch.setattr("pr_agent.tools.pr_code_suggestions.init_run_details", _seeded_init_run_details)
-        monkeypatch.setattr("pr_agent.tools.pr_code_suggestions.retry_with_fallback_models", _fake_retry_empty)
+        monkeypatch.setattr("pr_agent.commands.pr_code_suggestions.init_run_details", _seeded_init_run_details)
+        monkeypatch.setattr("pr_agent.commands.pr_code_suggestions.retry_with_fallback_models", _fake_retry_empty)
 
         get_settings().set("config.publish_output", True)
         get_settings().set("config.publish_output_progress", False)
@@ -265,7 +265,7 @@ async def test_pr_code_suggestions_appends_run_details_when_no_suggestions(monke
         await suggestions.run()
         with_details = suggestions.git_provider.publish_comment.call_args[0][0]
 
-        assert "Không tìm thấy đề xuất code nào cho PR." in without_details
+        assert "No code suggestions found for the PR." in without_details
         assert "⚙️ Agent run details" not in without_details
         assert "⚙️ Agent run details" in with_details
         # Confirm the markup actually matches the branch under test, not just that

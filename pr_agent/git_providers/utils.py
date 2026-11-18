@@ -14,7 +14,8 @@ from dynaconf import Dynaconf
 from dynaconf.loaders import env_loader
 from starlette_context import context
 
-from pr_agent.config_loader import get_settings
+from pr_agent.algo.review_json_output import hosted_markdown_config_error, hosted_markdown_export
+from pr_agent.config_loader import DEFAULT_BOT_DISPLAY_NAME, get_bot_display_name, get_settings
 from pr_agent.config_security import (
     PER_DIRECTORY_HOST_ONLY_KEYS_BY_SECTION,
     REPO_OVERRIDABLE_KEYS_BY_HOST_SECTION,
@@ -276,6 +277,9 @@ def apply_host_settings():
     """Merge CONFIG.EXTRA_CONFIG_URL before provider initializers read connection settings."""
     os.environ["AUTO_CAST_FOR_DYNACONF"] = "false"
     extra_source = get_settings().get("CONFIG.EXTRA_CONFIG_URL", None)
+    # The loaded file may clear its own URL; keep the original selection for this request.
+    if context.exists() and isinstance(extra_source, str) and extra_source.strip():
+        context["extra_config_source_seen"] = True
     try:
         if isinstance(extra_source, str) and extra_source.strip():
             extra_path, extra_is_temp = _resolve_extra_config_to_file(extra_source)
@@ -295,6 +299,7 @@ def apply_host_settings():
 
 
 def apply_repo_settings(pr_url):
+    """Apply repository overrides and return the provider that loaded them."""
     os.environ["AUTO_CAST_FOR_DYNACONF"] = "false"
     _restore_per_directory_settings()
 
@@ -364,6 +369,7 @@ def apply_repo_settings(pr_url):
                     os.remove(repo_settings_file)
                 except Exception as e:
                     get_logger().error(f"Failed to remove temporary settings file {repo_settings_file}: {e}")
+    return git_provider
 
 
 def _restore_per_directory_settings():
@@ -833,7 +839,16 @@ def handle_configurations_errors(config_errors, git_provider):
                     "và log của máy chủ để biết chi tiết."
                     if config_type in {"global", "group"} else err['error']
                 )
-                header = f"❌ **PR-Agent không thể áp dụng cấu hình repo '{config_type}'**"
+                if hosted_markdown_export.get():
+                    # Preserve local diagnostics without writing to the hosting platform.
+                    hosted_markdown_config_error.set(True)
+                    get_logger().warning(
+                        "Configuration error during unpublished hosted review export",
+                        artifact={"category": config_type, "error": err_message},
+                    )
+                    continue
+                bot_display_name = get_bot_display_name()
+                header = f"❌ **{bot_display_name} không thể áp dụng cấu hình repo '{config_type}'**"
                 body = (
                     f"{header}\n\nFile cấu hình cần phải là "
                     "[TOML](https://docs.pr-agent.ai/usage-guide/configuration_options/) hợp lệ, vui lòng sửa lại.\n\n"
@@ -871,7 +886,10 @@ def handle_configurations_errors(config_errors, git_provider):
                                                             initial_header=header,
                                                             update_header=False,
                                                             final_update_message=False,
-                                                            name=f"config-errors-{config_type}")
+                                                            name=f"config-errors-{config_type}",
+                                                            legacy_initial_header=(
+                                                                f"❌ **{DEFAULT_BOT_DISPLAY_NAME} không thể áp dụng "
+                                                                f"cấu hình repo '{config_type}'**"))
                 else:
                     git_provider.publish_comment(body)
     except Exception as e:

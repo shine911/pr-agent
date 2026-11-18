@@ -1,13 +1,15 @@
+from types import SimpleNamespace
+
 import litellm
 import pytest
 
-import pr_agent.algo.token_budget as token_budget
 from pr_agent.algo import (
     _CLAUDE_MODEL_FAMILIES,
     CLAUDE_EXTENDED_THINKING_MODELS,
     MAX_TOKENS,
     _generate_claude_registries,
     _validate_claude_model_family,
+    token_budget,
 )
 from pr_agent.algo.token_budget import get_max_tokens
 
@@ -257,7 +259,7 @@ class TestGetMaxTokens:
         monkeypatch.setattr(token_budget, "get_settings", lambda: fake_settings)
         monkeypatch.setattr(litellm, "get_model_info", lambda *args, **kwargs: None)
 
-        with pytest.raises(Exception, match="defined in MAX_TOKENS"):
+        with pytest.raises(Exception, match="Unable to resolve a positive input-token limit"):
             get_max_tokens(f"openrouter/openai/{model}_thinking{route}")
 
     @pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"])
@@ -385,7 +387,7 @@ class TestGetMaxTokens:
             })()
         })()
         monkeypatch.setattr(token_budget, "get_settings", lambda: fake_settings)
-        with pytest.raises(Exception, match="Ensure .* is defined in MAX_TOKENS"):
+        with pytest.raises(Exception, match="Unable to resolve a positive input-token limit"):
             get_max_tokens("gpt-4o_thinking")
 
     @pytest.mark.parametrize("invalid_limit", ["unknown", None, {}, float("inf"), 0, -1])
@@ -408,7 +410,7 @@ class TestGetMaxTokens:
         if raw_resolves:
             assert get_max_tokens(model) == 32000
         else:
-            with pytest.raises(Exception, match="Ensure .* is defined in MAX_TOKENS"):
+            with pytest.raises(Exception, match="Unable to resolve a positive input-token limit"):
                 get_max_tokens(model)
         assert lookups == ["openai/gpt-5.9", "gpt-5.9", model]
 
@@ -503,17 +505,48 @@ class TestGetMaxTokens:
             ("openrouter/pareto-code", 2000000),
         ],
     )
-    def test_openrouter_router_model_max_tokens(self, monkeypatch, model, expected):
+    @pytest.mark.parametrize("custom_limit", [0, 20000])
+    @pytest.mark.parametrize("cap", [0, 32000])
+    def test_openrouter_router_model_max_tokens(self, monkeypatch, model, expected, custom_limit, cap):
         fake_settings = type("", (), {
             "config": type("", (), {
-                "custom_model_max_tokens": 0,
-                "max_model_tokens": 0,
+                "custom_model_max_tokens": custom_limit,
+                "max_model_tokens": cap,
             })()
         })()
 
         monkeypatch.setattr(token_budget, "get_settings", lambda: fake_settings)
 
-        assert get_max_tokens(model) == expected
+        monkeypatch.setattr(litellm, "get_model_info", lambda *_: pytest.fail("Registry limit expected"))
+        assert get_max_tokens(model) == (min(expected, cap) if cap else expected)
+        assert get_max_tokens(model, ignore_max_model_tokens=True) == expected
+
+    @pytest.mark.parametrize("model, input_limit", [
+        ("openrouter/deepseek/deepseek-chat", 163840),
+        *[
+            (f"openrouter/anthropic/claude-{name}", 1000000)
+            for name in (
+                "sonnet-5", "sonnet-5.5", "sonnet-4.6", "sonnet-4.5",
+                "opus-5.5", "opus-5", "opus-4.8", "opus-4.7", "opus-4.6",
+                "haiku-5.5", "fable-5.2", "fable-5.1", "fable-5",
+            )
+        ],
+    ])
+    @pytest.mark.parametrize("cap", [0, 32000, 500000])
+    def test_openrouter_input_budget_regression(self, monkeypatch, model, input_limit, cap):
+        """Guard verified input budgets, including reductions hidden by the default cap.
+
+        These are compatibility baselines, not immutable provider limits. LiteLLM 1.108
+        dropped deepseek-chat and reports 200000 for these Anthropic models, so they
+        are pinned in MAX_TOKENS at the limits OpenRouter lists. Revalidate intentional
+        changes rather than deriving expected values from the SDK lookup.
+        """
+        assert MAX_TOKENS[model] == input_limit
+        settings = SimpleNamespace(config=SimpleNamespace(custom_model_max_tokens=0, max_model_tokens=cap))
+        monkeypatch.setattr(token_budget, "get_settings", lambda: settings)
+
+        assert get_max_tokens(model) == (min(input_limit, cap) if cap else input_limit)
+        assert get_max_tokens(model, ignore_max_model_tokens=True) == input_limit
 
     # Test situations where the model is not registered and exists as a custom model
     def test_model_has_custom(self, monkeypatch):
@@ -562,7 +595,7 @@ class TestGetMaxTokens:
 
         model = "custom-model"
 
-        with pytest.raises(Exception, match="Ensure .* is defined in MAX_TOKENS"):
+        with pytest.raises(Exception, match="Unable to resolve a positive input-token limit"):
             get_max_tokens(model)
 
     def test_model_max_tokens_with__limit(self, monkeypatch):
@@ -620,6 +653,10 @@ class TestGetMaxTokens:
     @pytest.mark.parametrize("model", [
         "gemini/gemini-4-argon",
         "vertex_ai/gemini-4-argon",
+        "gemini/gemini-4-carbon",
+        "vertex_ai/gemini-4-carbon",
+        "gemini/gemini-4-hydrogen",
+        "vertex_ai/gemini-4-hydrogen",
     ])
     def test_gemini_4_x_models_max_tokens(self, monkeypatch, model):
         fake_settings = type("", (), {
@@ -802,9 +839,43 @@ class TestGetMaxTokens:
             "bedrock/au.anthropic.claude-sonnet-5",
             "bedrock/eu.anthropic.claude-sonnet-5",
             "bedrock/jp.anthropic.claude-sonnet-5",
+            "anthropic/claude-sonnet-5-5",
+            "claude-sonnet-5-5",
+            "vertex_ai/claude-sonnet-5-5",
+            "bedrock/anthropic.claude-sonnet-5-5",
+            "bedrock/global.anthropic.claude-sonnet-5-5",
+            "bedrock/us.anthropic.claude-sonnet-5-5",
+            "bedrock/au.anthropic.claude-sonnet-5-5",
+            "bedrock/eu.anthropic.claude-sonnet-5-5",
         ],
     )
-    def test_claude_sonnet_5_model_max_tokens(self, monkeypatch, model):
+    def test_claude_sonnet_5_family_model_max_tokens(self, monkeypatch, model):
+        fake_settings = type('', (), {
+            'config': type('', (), {
+                'custom_model_max_tokens': 0,
+                'max_model_tokens': 0
+            })()
+        })()
+
+        monkeypatch.setattr(token_budget, "get_settings", lambda: fake_settings)
+
+        assert get_max_tokens(model) == 1000000
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "anthropic/claude-haiku-5-5",
+            "claude-haiku-5-5",
+            "vertex_ai/claude-haiku-5-5",
+            "bedrock/anthropic.claude-haiku-5-5",
+            "bedrock/global.anthropic.claude-haiku-5-5",
+            "bedrock/us.anthropic.claude-haiku-5-5",
+            "bedrock/au.anthropic.claude-haiku-5-5",
+            "bedrock/eu.anthropic.claude-haiku-5-5",
+            "bedrock/jp.anthropic.claude-haiku-5-5",
+        ],
+    )
+    def test_claude_haiku_5_5_model_max_tokens(self, monkeypatch, model):
         fake_settings = type('', (), {
             'config': type('', (), {
                 'custom_model_max_tokens': 0,
@@ -836,6 +907,24 @@ class TestGetMaxTokens:
         })()
 
         monkeypatch.setattr(token_budget, "get_settings", lambda: fake_settings)
+
+        assert get_max_tokens(model) == 1000000
+
+    @pytest.mark.parametrize("model", [
+        "claude-fable-5-2",
+        "anthropic/claude-fable-5-2",
+        "vertex_ai/claude-fable-5-2",
+        "bedrock/anthropic.claude-fable-5-2",
+        "bedrock/global.anthropic.claude-fable-5-2",
+        "bedrock/us.anthropic.claude-fable-5-2",
+        "azure_ai/claude-fable-5-2",
+        "bedrock/claude_platform/claude-fable-5-2",
+    ])
+    def test_claude_fable_5_2_uses_official_context_window(self, monkeypatch, model):
+        settings = type("Settings", (), {
+            "config": type("Config", (), {"custom_model_max_tokens": 0, "max_model_tokens": 0})(),
+        })()
+        monkeypatch.setattr(token_budget, "get_settings", lambda: settings)
 
         assert get_max_tokens(model) == 1000000
 
@@ -922,6 +1011,18 @@ class TestGetMaxTokens:
         assert get_max_tokens(model) == 1000000
 
 
+
+    def test_opencode_go_model_max_tokens_from_litellm(self, monkeypatch):
+        fake_settings = type("", (), {
+            "config": type("", (), {
+                "custom_model_max_tokens": 0,
+                "max_model_tokens": 0
+            })()
+        })()
+
+        monkeypatch.setattr(token_budget, "get_settings", lambda: fake_settings)
+
+        assert get_max_tokens("opencode_go/deepseek-v4.1-flash") == 1000000
 
     @pytest.mark.parametrize(
         "model",
@@ -1026,8 +1127,11 @@ class TestGetMaxTokens:
 
         assert get_max_tokens("fake-provider/fake-model-xyz") == 32000
 
-    def test_litellm_fallback_failure_preserves_existing_error(self, monkeypatch):
-        """When litellm also cannot resolve, the existing error path fires."""
+    @pytest.mark.parametrize("metadata", [None, {}, {"max_input_tokens": None},
+                                         {"max_input_tokens": 0}, {"max_input_tokens": -1},
+                                         {"max_input_tokens": "invalid"}, ValueError("private endpoint details")])
+    def test_litellm_fallback_failure_explains_input_limit(self, monkeypatch, metadata):
+        """Explain failed resolution without leaking the underlying exception text."""
         fake_settings = type('', (), {
             'config': type('', (), {
                 'custom_model_max_tokens': 0,
@@ -1037,12 +1141,20 @@ class TestGetMaxTokens:
         monkeypatch.setattr(token_budget, "get_settings", lambda: fake_settings)
 
         def raise_for_unknown(model):
-            raise Exception("This model isn't mapped yet")
+            if isinstance(metadata, Exception):
+                raise metadata
+            return metadata
 
         monkeypatch.setattr(litellm, "get_model_info", raise_for_unknown)
 
-        with pytest.raises(Exception, match="Ensure .* is defined in MAX_TOKENS"):
+        with pytest.raises(Exception, match="Unable to resolve a positive input-token limit") as error:
             get_max_tokens("fake-provider/fake-unknown-model")
+        message = str(error.value)
+        assert "fake-provider/fake-unknown-model" in message
+        assert "built-in limits or LiteLLM metadata" in message
+        assert "config.custom_model_max_tokens to a verified positive input-token limit" in message
+        assert "config.max_model_tokens only caps a resolved limit" in message
+        assert "private endpoint details" not in message
 
     def test_litellm_fallback_respects_max_model_tokens_cap(self, monkeypatch):
         """max_model_tokens cap applies to LiteLLM-resolved values."""
@@ -1117,87 +1229,96 @@ class TestGetMaxTokens:
         # Negative checks to ensure no over-generation
         assert "bedrock/apac.anthropic.claude-opus-4-8" not in MAX_TOKENS
 
-    def test_claude_opus_4_6_family_expansion_and_capabilities(self):
-        """Independent verification of Opus 4.6 generated aliases and capabilities."""
-        expected_max_tokens_aliases = {
-            "claude-opus-4-6",
-            "anthropic/claude-opus-4-6",
-            "vertex_ai/claude-opus-4-6",
-            "bedrock/anthropic.claude-opus-4-6-v1:0",
-            "bedrock/global.anthropic.claude-opus-4-6-v1:0",
-            "bedrock/eu.anthropic.claude-opus-4-6-v1:0",
-            "bedrock/au.anthropic.claude-opus-4-6-v1:0",
-            "bedrock/jp.anthropic.claude-opus-4-6-v1:0",
-            "bedrock/apac.anthropic.claude-opus-4-6-v1:0",
-            "bedrock/us.anthropic.claude-opus-4-6-v1:0",
-            "claude-opus-4-6-20260120",
-            "anthropic/claude-opus-4-6-20260120",
-            "vertex_ai/claude-opus-4-6@20260120",
-            "bedrock/anthropic.claude-opus-4-6-20260120-v1:0",
-            "bedrock/us.anthropic.claude-opus-4-6-20260120-v1:0",
+    def test_claude_sonnet_5_5_family_expansion_and_capabilities(self):
+        """Independent verification of Sonnet 5.5 generated aliases and capabilities."""
+        expected_aliases = {
+            "claude-sonnet-5-5",
+            "anthropic/claude-sonnet-5-5",
+            "vertex_ai/claude-sonnet-5-5",
+            "bedrock/anthropic.claude-sonnet-5-5",
+            "bedrock/global.anthropic.claude-sonnet-5-5",
+            "bedrock/us.anthropic.claude-sonnet-5-5",
+            "bedrock/eu.anthropic.claude-sonnet-5-5",
+            "bedrock/au.anthropic.claude-sonnet-5-5",
         }
 
         # Exact set equality against filtered MAX_TOKENS
-        actual_aliases = {k for k in MAX_TOKENS if "claude-opus-4-6" in k}
-        assert actual_aliases == expected_max_tokens_aliases
+        actual_aliases = {k for k in MAX_TOKENS if "claude-sonnet-5-5" in k}
+        assert actual_aliases == expected_aliases
 
         # Context window tokens
-        for alias in expected_max_tokens_aliases:
+        for alias in expected_aliases:
             assert MAX_TOKENS[alias] == 1000000
 
-        # Extended thinking: 9 aliases
-        expected_thinking_aliases = {
-            "anthropic/claude-opus-4-6",
-            "claude-opus-4-6",
-            "vertex_ai/claude-opus-4-6",
-            "bedrock/anthropic.claude-opus-4-6-v1:0",
-            "bedrock/us.anthropic.claude-opus-4-6-v1:0",
-            "bedrock/au.anthropic.claude-opus-4-6-v1:0",
-            "bedrock/eu.anthropic.claude-opus-4-6-v1:0",
-            "bedrock/jp.anthropic.claude-opus-4-6-v1:0",
-            "bedrock/global.anthropic.claude-opus-4-6-v1:0",
-        }
-        actual_thinking_aliases = {k for k in CLAUDE_EXTENDED_THINKING_MODELS if "claude-opus-4-6" in k}
-        assert actual_thinking_aliases == expected_thinking_aliases
+        # Capability lists
+        for alias in expected_aliases:
+            assert alias not in CLAUDE_EXTENDED_THINKING_MODELS
 
+        # Negative checks to ensure no over-generation
+        assert "bedrock/jp.anthropic.claude-sonnet-5-5" not in MAX_TOKENS
+        assert "bedrock/apac.anthropic.claude-sonnet-5-5" not in MAX_TOKENS
+
+    _OPUS_4_6_MAX_TOKENS_ALIASES = {
+        "claude-opus-4-6",
+        "anthropic/claude-opus-4-6",
+        "vertex_ai/claude-opus-4-6",
+        "bedrock/anthropic.claude-opus-4-6-v1:0",
+        "bedrock/global.anthropic.claude-opus-4-6-v1:0",
+        "bedrock/eu.anthropic.claude-opus-4-6-v1:0",
+        "bedrock/au.anthropic.claude-opus-4-6-v1:0",
+        "bedrock/jp.anthropic.claude-opus-4-6-v1:0",
+        "bedrock/apac.anthropic.claude-opus-4-6-v1:0",
+        "bedrock/us.anthropic.claude-opus-4-6-v1:0",
+        "claude-opus-4-6-20260120",
+        "anthropic/claude-opus-4-6-20260120",
+        "vertex_ai/claude-opus-4-6@20260120",
+        "bedrock/anthropic.claude-opus-4-6-20260120-v1:0",
+        "bedrock/us.anthropic.claude-opus-4-6-20260120-v1:0",
+    }
+    # Extended thinking: 9 aliases
+    _OPUS_4_6_THINKING_ALIASES = {
+        "anthropic/claude-opus-4-6",
+        "claude-opus-4-6",
+        "vertex_ai/claude-opus-4-6",
+        "bedrock/anthropic.claude-opus-4-6-v1:0",
+        "bedrock/us.anthropic.claude-opus-4-6-v1:0",
+        "bedrock/au.anthropic.claude-opus-4-6-v1:0",
+        "bedrock/eu.anthropic.claude-opus-4-6-v1:0",
+        "bedrock/jp.anthropic.claude-opus-4-6-v1:0",
+        "bedrock/global.anthropic.claude-opus-4-6-v1:0",
+    }
+
+    def test_claude_opus_4_6_family_registers_expected_aliases(self):
+        """Independent verification of Opus 4.6 generated aliases and capabilities."""
+        # Exact set equality against filtered MAX_TOKENS
+        actual_aliases = {k for k in MAX_TOKENS if "claude-opus-4-6" in k}
+        assert actual_aliases == self._OPUS_4_6_MAX_TOKENS_ALIASES
+
+    def test_claude_opus_4_6_aliases_use_1m_context_window(self):
+        # Context window tokens
+        for alias in self._OPUS_4_6_MAX_TOKENS_ALIASES:
+            assert MAX_TOKENS[alias] == 1000000
+
+    def test_claude_opus_4_6_extended_thinking_aliases(self):
+        actual_thinking_aliases = {k for k in CLAUDE_EXTENDED_THINKING_MODELS if "claude-opus-4-6" in k}
+        assert actual_thinking_aliases == self._OPUS_4_6_THINKING_ALIASES
+
+    def test_claude_opus_4_6_apac_and_dated_variants_lack_extended_thinking(self):
         # Negative checks: apac and dated variants NOT in extended thinking
         assert "bedrock/apac.anthropic.claude-opus-4-6-v1:0" not in CLAUDE_EXTENDED_THINKING_MODELS
         assert "claude-opus-4-6-20260120" not in CLAUDE_EXTENDED_THINKING_MODELS
         assert "anthropic/claude-opus-4-6-20260120" not in CLAUDE_EXTENDED_THINKING_MODELS
         assert "vertex_ai/claude-opus-4-6@20260120" not in CLAUDE_EXTENDED_THINKING_MODELS
 
-    def test_claude_model_family_metadata_key_validation(self):
-        """Regression test for validating Claude model family metadata keys.
-
-        Proves:
-        - all current shipped families validate successfully.
-        - an unknown top-level key (e.g. 'bedrock_region') raises ValueError naming the key and model_id.
-        - an unknown nested extra_aliases key (e.g. 'extended_thinkin') raises ValueError with key, alias, and model_id.
-        - global family definitions are not mutated.
-        """
-        # All current shipped families must pass validation
-        for fam in _CLAUDE_MODEL_FAMILIES:
-            _validate_claude_model_family(fam)
-
-        # 1. Copied family with unknown top-level key must raise ValueError
+    @pytest.fixture
+    def family_with_unknown_top_level_key(self):
         bad_fam = dict(_CLAUDE_MODEL_FAMILIES[0])
         bad_fam["bedrock_region"] = ("global", "us")
+        return bad_fam
 
-        with pytest.raises(ValueError) as exc_info:
-            _validate_claude_model_family(bad_fam)
-
-        err_msg = str(exc_info.value)
-        assert "bedrock_region" in err_msg
-        assert bad_fam["model_id"] in err_msg
-
-        # Generator must also reject the unknown top-level key when expanding
-        with pytest.raises(ValueError) as exc_info_gen:
-            _generate_claude_registries(families=[bad_fam])
-        assert "bedrock_region" in str(exc_info_gen.value)
-        assert bad_fam["model_id"] in str(exc_info_gen.value)
-
-        # 2. Family with unknown nested extra_aliases key must raise ValueError
-        bad_nested_fam = {
+    @pytest.fixture
+    def family_with_unknown_nested_alias_key(self):
+        return {
             "model_id": "claude-opus-4-6",
             "extra_aliases": {
                 "some/alias": {
@@ -1207,6 +1328,38 @@ class TestGetMaxTokens:
             },
         }
 
+    def test_shipped_claude_model_families_pass_validation(self):
+        # All current shipped families must pass validation
+        for fam in _CLAUDE_MODEL_FAMILIES:
+            _validate_claude_model_family(fam)
+
+    def test_validator_rejects_unknown_top_level_family_key(self, family_with_unknown_top_level_key):
+        # 1. Copied family with unknown top-level key must raise ValueError
+        bad_fam = family_with_unknown_top_level_key
+
+        with pytest.raises(ValueError) as exc_info:
+            _validate_claude_model_family(bad_fam)
+
+        err_msg = str(exc_info.value)
+        assert "bedrock_region" in err_msg
+        assert bad_fam["model_id"] in err_msg
+
+    def test_generator_rejects_unknown_top_level_family_key(self, family_with_unknown_top_level_key):
+        # Generator must also reject the unknown top-level key when expanding
+        bad_fam = family_with_unknown_top_level_key
+
+        with pytest.raises(ValueError) as exc_info_gen:
+            _generate_claude_registries(families=[bad_fam])
+        assert "bedrock_region" in str(exc_info_gen.value)
+        assert bad_fam["model_id"] in str(exc_info_gen.value)
+
+        # Ensure global families list was not mutated
+        assert "bedrock_region" not in _CLAUDE_MODEL_FAMILIES[0]
+
+    def test_validator_rejects_unknown_nested_alias_key(self, family_with_unknown_nested_alias_key):
+        # 2. Family with unknown nested extra_aliases key must raise ValueError
+        bad_nested_fam = family_with_unknown_nested_alias_key
+
         with pytest.raises(ValueError) as exc_info_nested:
             _validate_claude_model_family(bad_nested_fam)
 
@@ -1215,15 +1368,15 @@ class TestGetMaxTokens:
         assert "some/alias" in err_nested
         assert "claude-opus-4-6" in err_nested
 
+    def test_generator_rejects_unknown_nested_alias_key(self, family_with_unknown_nested_alias_key):
         # Generator must also reject the unknown nested key
+        bad_nested_fam = family_with_unknown_nested_alias_key
+
         with pytest.raises(ValueError) as exc_info_gen_nested:
             _generate_claude_registries(families=[bad_nested_fam])
         assert "extended_thinkin" in str(exc_info_gen_nested.value)
         assert "some/alias" in str(exc_info_gen_nested.value)
         assert "claude-opus-4-6" in str(exc_info_gen_nested.value)
-
-        # Ensure global families list was not mutated
-        assert "bedrock_region" not in _CLAUDE_MODEL_FAMILIES[0]
 
     def test_claude_exceptional_extra_alias_capabilities(self):
         """Prove exceptional extra-alias capability routing.
@@ -1289,6 +1442,28 @@ class TestGetMaxTokens:
         assert get_max_tokens(model) == 32000
         assert get_max_tokens(model, ignore_max_model_tokens=True) == expected
 
+    def test_shipped_default_max_model_tokens_clamps_large_windows(self, monkeypatch):
+        """Issue #4948: the shipped config.max_model_tokens default is 256000, so a
+        model with a far larger window is clamped to it instead of the old 32000."""
+        import tomllib
+        from pathlib import Path
+
+        toml_path = (
+            Path(token_budget.__file__).resolve().parents[2]
+            / "pr_agent"
+            / "settings"
+            / "configuration.toml"
+        )
+        with open(toml_path, "rb") as f:
+            shipped_default = tomllib.load(f)["config"]["max_model_tokens"]
+        assert shipped_default == 256000
+
+        fake_settings = SimpleNamespace(
+            config=SimpleNamespace(custom_model_max_tokens=0, max_model_tokens=shipped_default)
+        )
+        monkeypatch.setattr(token_budget, "get_settings", lambda: fake_settings)
+        assert get_max_tokens("openrouter/auto") == 256000
+
 
 class TestCorrectedClaudeWindows:
 
@@ -1324,6 +1499,10 @@ class TestNoLiteLLMDuplicates:
         "bedrock/converse/moonshotai.kimi-k3",
         "bedrock/converse/us.moonshotai.kimi-k3",
         "bedrock/converse/global.moonshotai.kimi-k3",
+        "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+        "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0",
+        "bedrock/global.anthropic.claude-sonnet-4-20250514-v1:0",
+        "bedrock/apac.anthropic.claude-sonnet-4-20250514-v1:0",
     }
 
     # Models pinned in MAX_TOKENS because LiteLLM's bundled backup cost map (used
@@ -1335,8 +1514,13 @@ class TestNoLiteLLMDuplicates:
         "vertex_ai/gemini-3.8-flash",
         "gemini/gemini-4-argon",
         "vertex_ai/gemini-4-argon",
+        "gemini/gemini-4-carbon",
+        "vertex_ai/gemini-4-carbon",
+        "gemini/gemini-4-hydrogen",
+        "vertex_ai/gemini-4-hydrogen",
         "openrouter/x-ai/grok-4.5",
         "openrouter/x-ai/grok-4.6",
+        "openrouter/deepseek/deepseek-chat",
         "xai/grok-build-latest",
         "zai/glm-5.2",
     }

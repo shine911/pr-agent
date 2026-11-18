@@ -1,0 +1,10 @@
+name: pr-agent CodeQL config
+
+# Tests render prompt text with plain jinja2 and build mock-only control flow, so scanning them only adds noise.
+paths-ignore:
+  - tests/**
+
+query-filters:
+  # False positives on PEP 695 type parameters (`def f[T, R]`) and on `del x` guarded by a flag.
+  - exclude:
+      id: py/uninitialized-local-variable

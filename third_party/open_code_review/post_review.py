@@ -1283,6 +1283,7 @@ def publish(result, diff_refs, poster, config, sleep=_sleep):
     routed = []
     for comment in comments:
         path = comment.get("path", "")
+        start_line = comment.get("start_line", 0)
         end_line = comment.get("end_line", 0)
         # Inline posting needs a valid end_line (it becomes the GitLab position's
         # new_line). A start_line-only comment cannot be positioned and must land
@@ -1613,7 +1614,7 @@ def main(argv=None):
             with open(args.stderr_log, "r") as f:
                 stderr_content = f.read().strip()
         except FileNotFoundError:
-            log("warning: stderr log file not found: %s (continuing without stderr details)" % args.stderr_log)
+            pass
         if stderr_content:
             poster = make_poster(api_base, api_token, auth_header, config)
             run_tag = config.get("run_tag", "0-0")
