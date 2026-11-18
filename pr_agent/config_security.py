@@ -181,6 +181,9 @@ def should_skip_config_key(section: str, key: str, skip_keys=()) -> bool:
 CLI_HOST_ONLY_KEYS_BY_SECTION = {
     "config": frozenset({
         "branch_issue_regex",
+        # Fork: unlike response_language, the command boundary does not restore it, so a comment could not
+        # scope it to one command; set it in host or repository configuration.
+        "fixed_text_language",
         "ai_timeout",
         "enable_custom_labels",
         "fallback_models",

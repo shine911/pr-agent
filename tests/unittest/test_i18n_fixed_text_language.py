@@ -51,3 +51,11 @@ def test_unknown_fixed_text_language_falls_back_to_english(languages):
     languages("xx-YY", response_language="vi-VN")
 
     assert t("improve.no_suggestions") == "No suggestions found to improve this PR."
+
+
+def test_fixed_text_language_cannot_be_set_from_a_pr_comment():
+    from pr_agent.algo.cli_args import CliArgs
+
+    is_valid, _ = CliArgs.validate_user_args(["--config.fixed_text_language=en"])
+
+    assert is_valid is False

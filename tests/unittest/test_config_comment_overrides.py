@@ -57,7 +57,6 @@ COMMENT_OVERRIDABLE_KEYS = {
         "progress_gif_width", "propagate_command_errors", "publish_output", "publish_output_progress",
         "reaction_on_failure", "reaction_on_start", "reaction_on_success", "reasoning_effort",
         "repo_context_from_default_branch", "repo_context_max_lines", "response_language", "restricted_mode",
-        "fixed_text_language",  # fork: like response_language, it only picks the fixed-text catalog
         "retry_same_model_on_length", "retry_same_model_on_timeout", "seed", "temperature",
         "use_extra_bad_extensions", "use_global_settings_file", "use_repo_settings_file", "verbosity_level",
     }),
