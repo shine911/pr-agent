@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bump the bundled open-code-review CLI and the vendored post_review.py to a release (default: the latest).
-# Usage: bump_ocr.sh [vX.Y.Z]
+# Usage: [FORCE=1] bump_ocr.sh [vX.Y.Z]
 # Edits docker/Dockerfile (OCR_VERSION + both SHA-256 pins), third_party/open_code_review/{post_review.py,LICENSE,
 # README.md}, and probes the real binary for the CLI surface pr_agent uses. Prints a report; exit 1 on any failed probe.
 set -euo pipefail
@@ -13,6 +13,9 @@ VENDOR="third_party/open_code_review"
 CURRENT="$(sed -n 's/^ARG OCR_VERSION=//p' "$DOCKERFILE")"
 TARGET="${1:-$(gh release view -R "$REPO" --json tagName -q .tagName)}"
 echo "current=$CURRENT target=$TARGET"
+if [ "$CURRENT" = "$TARGET" ] && [ "${FORCE:-0}" != 1 ]; then
+  echo "Already at $TARGET; nothing to upgrade (FORCE=1 re-runs the probes and re-vendors)."; exit 0
+fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

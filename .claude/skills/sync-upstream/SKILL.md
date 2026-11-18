@@ -130,7 +130,8 @@ Then update `fork-features.md` (new features, renamed anchor paths, absorbed fea
 
 ## Step 2: upgrade OCR
 
-Follow [`../upgrade-ocr/SKILL.md`](../upgrade-ocr/SKILL.md).
+Follow [`../upgrade-ocr/SKILL.md`](../upgrade-ocr/SKILL.md). Afterwards the fork-delta gate reports the old OCR pins and vendored
+provenance as LOST; acknowledge them as replaced by step 2.
 
 ## Report
 

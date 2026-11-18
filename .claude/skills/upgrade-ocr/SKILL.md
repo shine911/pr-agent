@@ -26,7 +26,8 @@ the real binary.
    rewrites the provenance lines in `third_party/open_code_review/README.md`, and probes the host-arch binary for
    every `ocr` flag, subcommand and config key `pr_ocr_review.py` uses.
 
-   Done when it exits 0. If the version is already current, stop: there is nothing to upgrade.
+   Done when it exits 0. When the version is already current it says so and exits 0 without changes: stop there.
+   `FORCE=1` re-runs the probes and re-vendoring on the current tag, which should leave no diff.
 
 2. **Reconcile the CLI surface.** The probe list in `bump_ocr.sh` is a cache of what `pr_ocr_review.py` and
    `pr_agent/algo/ocr_config.py` call. Grep those two files for `"ocr"` invocations, `config set` keys and protocol
