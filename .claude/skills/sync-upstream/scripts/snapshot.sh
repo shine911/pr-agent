@@ -34,6 +34,7 @@ TS="$(date +%Y%m%d-%H%M%S)"
 BACKUP_TAG="backup/pre-upstream-sync-$TS"
 git tag "$BACKUP_TAG" "$OLD_HEAD"
 
+rm -f "$STATE_DIR/ack.tsv" "$STATE_DIR/after.xml" "$STATE_DIR/after.log"  # acknowledgements are per run
 cat > "$STATE_DIR/state.env" <<EOF
 OLD_HEAD=$OLD_HEAD
 UPSTREAM_REF=$UPSTREAM_REF

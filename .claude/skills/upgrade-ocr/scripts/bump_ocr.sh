@@ -43,9 +43,23 @@ echo "CLI surface used by pr_agent/commands/pr_ocr_review.py:"
 for flag in --from --to --format --audience --rule; do probe "review $flag" "$flag" review --help; done
 probe "config set" "set" config --help
 probe "llm test" "test" llm --help
-for key in llm.url llm.auth_token llm.model llm.protocol language llm.extra_body; do
-  probe "config key $key" "$key" config set --help
-done
+# `config set --help` lists no keys, so set each key pr_ocr_review.py writes, with a realistic value, in a throwaway
+# HOME; an unknown key or a rejected value exits non-zero. A made-up key must fail, or the probe proves nothing.
+config_probe() {  # config_probe <key> <value> [expect_fail]
+  if HOME="$WORK/home" "$OCR" config set "$1" "$2" >/dev/null 2>&1; then status=ok; else status=rejected; fi
+  if [ "$status" = "${3:-ok}" ]; then
+    echo "  ok   config set $1 ($status)"
+  else
+    echo "  FAIL config set $1 $2 ($status)"; PROBE_FAIL=1
+  fi
+}
+config_probe llm.url https://api.openai.com/v1
+config_probe llm.auth_token dummy-token
+config_probe llm.model gpt-5.6-terra
+for protocol in openai-responses openai anthropic; do config_probe llm.protocol "$protocol"; done
+config_probe language Vietnamese
+config_probe llm.extra_body '{"reasoning":{"effort":"low"}}'
+config_probe not.a.real.key 1 rejected
 
 # Vendored poster and license, from the same tag.
 RAW="https://raw.githubusercontent.com/$REPO/$TARGET"

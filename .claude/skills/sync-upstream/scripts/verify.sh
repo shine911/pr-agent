@@ -32,7 +32,8 @@ no_refs_to_fork_deletions() {
   while IFS=$'\t' read -r status path; do
     [ "$status" = "D" ] || continue
     name="$(basename "$path")"
-    hits="$(git grep -nF "$name" -- . ':!CHANGELOG.md' ':!.claude' || true)"
+    # Markdown and comment lines only describe the file; code and config that load it are what break.
+    hits="$(git grep -nF "$name" -- . ':!CHANGELOG.md' ':!.claude' ':!*.md' | grep -vE '^[^:]+:[0-9]+:\s*#' || true)"
     if [ -n "$hits" ]; then echo "References to fork-deleted $path:"; echo "$hits"; found=1; fi
   done < <(git diff --name-status --no-renames "$MERGE_BASE" "$OLD_HEAD")
   [ "$found" = 0 ]
@@ -66,12 +67,14 @@ fork_delta() { python3 "$SKILL_DIR/check_fork_delta.py"; }
 pre_commit_changed() {
   mapfile -t files < <(git diff --name-only --diff-filter=d "$OLD_HEAD")
   [ "${#files[@]}" = 0 ] && return 0
-  uv run pre-commit run --files "${files[@]}"
+  # pre-commit is not a project dependency (CI uses pre-commit/action), so run it as a uv tool.
+  uvx pre-commit run --files "${files[@]}"
 }
 
 gate "no unmerged paths or conflict markers" no_conflicts
 gate "no references to files the fork deleted" no_refs_to_fork_deletions
 gate "no stale paths from upstream directory renames" python3 "$SKILL_DIR/check_fork_delta.py" --stale-paths
+gate "no method defined twice in one class" python3 "$SKILL_DIR/check_duplicate_defs.py"
 gate "uv.lock matches pyproject.toml" lock_in_sync
 gate "ruff on changed Python files" ruff_changed
 gate "configuration_reference.md matches generator" config_reference

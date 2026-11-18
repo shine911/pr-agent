@@ -34,7 +34,10 @@ the real binary.
    removed something: read that release's notes (`gh release view <tag> -R alibaba/open-code-review`), adapt
    `pr_ocr_review.py` and its tests, or ask the dev when the replacement changes behaviour.
 
-3. **Review a changed `post_review.py`.** When the script reports it CHANGED, read `git diff` of it. `ocr_review`
+3. **Review a changed `post_review.py`.** When the script reports it CHANGED, first compare the new sha256 with the
+   one the vendor README recorded before the bump: equal means upstream did not change the file and the repo copy had
+   been edited in place (CodeQL autofix commits have done this); re-vendoring restores upstream, and the report says
+   to dismiss those CodeQL findings on `third_party/` instead of patching. Otherwise read `git diff` of it. `ocr_review`
    runs it as `python post_review.py <result.json>` with `CI_SERVER_URL`, `CI_PROJECT_ID`, `CI_MERGE_REQUEST_IID`,
    `GITLAB_API_TOKEN` in the environment; confirm the positional argument, those variables and the result-file shape
    it reads are unchanged, or adapt the caller. The file is vendored unmodified: never edit it locally.

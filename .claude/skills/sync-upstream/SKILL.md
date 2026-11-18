@@ -40,6 +40,9 @@ Done when every fork-only commit is accounted for.
 
 ### 1.3 Merge
 
+Compare `uv --version` with `tool.uv.required-version` in `upstream/main:pyproject.toml`. When upstream raised the
+floor, run `uv self update <that lower bound>` (the packaging test asserts that exact version) and tell the dev.
+
 ```bash
 git merge --no-ff --no-commit upstream/main
 ```
@@ -51,6 +54,9 @@ If the merge refuses because an untracked or modified file would be overwritten,
 
 Work through `git status` until `git diff --name-only --diff-filter=U` is empty. For each file, read both sides
 (`git diff MERGE_BASE OLD_HEAD -- <path>` is the fork's intent; values are in `state.env`) and apply the rules below.
+`python3 .claude/skills/sync-upstream/scripts/hunks.py show <file>` prints a file's hunks numbered; `hunks.py pick
+<file> o t ot ...` resolves them where one side, or both verbatim, is right. Resolve source files first, then tests:
+test expectations follow from what the resolved source emits.
 
 **Upstream owns structure, the fork owns behaviour.** When upstream renamed, split or refactored code, take
 upstream's shape and re-apply the fork's change on top of it. Re-implementing the fork change inside the new structure
@@ -64,8 +70,16 @@ is expected; resurrecting the old structure is not.
   there, `git rm` the old path. Renamed test files get the same treatment.
 - **Modify/delete, fork side deleted**: if the file is an intentional divergence in `fork-features.md`, `git rm` it.
   Otherwise treat it as a new question for the dev.
-- **Content conflict**: keep both sides' intent. Fork user-facing strings stay Vietnamese; new upstream strings stay
-  English and go in the report as untranslated.
+- **Content conflict**: keep both sides' intent.
+- **User-facing strings**: where upstream now renders text through `t("…")` (its i18n catalogs), take upstream's
+  call; `config.fixed_text_language` makes it Vietnamese. Where upstream rewrote a string the fork had translated
+  (new wording, `{bot_display_name}`, `tool` → `command`, a configurable path), translate upstream's new text. Brand-new
+  upstream strings stay English and go in the report as untranslated. A translated string that code matches back
+  (headers found by regex, labels compared later) must change at every match site; grep for it.
+- **Fork method vs a new upstream method of the same name**: rename the fork's; a later definition in the class
+  silently replaces upstream's and breaks its callers (the duplicate-definition gate catches this).
+- **New upstream policy tests** (config description length, `SECTION_DOCS`, the PR-comment override ledger, GitLab
+  `per_page`) apply to fork code too: satisfy them, following the fork-key rule in `fork-features.md`.
 - **`docs/docs/usage-guide/configuration_reference.md`**: take upstream's side, resolve `configuration.toml`, then
   regenerate the page with `uv run python scripts/generate_config_reference.py` and set the active-key count in
   `tests/unittest/test_config_reference.py`.
@@ -85,24 +99,31 @@ bash .claude/skills/sync-upstream/scripts/verify.sh          # all gates
 bash .claude/skills/sync-upstream/scripts/verify.sh --fast   # skip unit suite and pre-commit while iterating
 ```
 
-The gates check: no conflict markers or unmerged paths, no references to files the fork deleted, no stale paths from
-upstream directory renames, `uv.lock` in sync, ruff on changed files, the config reference page, the **fork delta**,
-the unit suite against the baseline, the packaging test, and pre-commit on changed files.
+The gates check: no conflict markers or unmerged paths, no references to files the fork deleted (code and config;
+upstream may add a `COPY` or test for one), no stale paths from upstream directory renames (old imports, `mock.patch`
+targets), no method defined twice in a class, `uv.lock` in sync, ruff on changed files, the config reference page,
+the **fork delta**, the unit suite against the baseline, the packaging test, and pre-commit on changed files.
+
+Fix test failures by grouping them per file (`grep ^FAILED <git-dir>/upstream-sync/after.log`). Most are language
+mismatches; for each, grep `pr_agent/` for what the source emits and change the expectation to that, never the
+source to English. A failure that is not a wording mismatch is a real bug until shown otherwise.
 
 The fork delta gate (`scripts/check_fork_delta.py`) lists every line the fork added that is gone (LOST), every line
-the fork removed that came back (BACK), and fork files that went missing or returned. For each finding, either fix
-the tree or, when the loss is right (upstream now does the same thing, or the line moved into new code in a different
-form), acknowledge it in `<git-dir>/upstream-sync/ack.tsv` with a one-line reason. `compare_tests.py` flags tests
-that regressed, vanished or fail; a vanished test with a candidate rename needs a look, not a fix.
+the fork removed that came back (BACK), and fork files that went missing or returned. Near matches (renamed variables or
+imports) print as FUZZY and are not counted; skim them. For each finding, either fix the tree or, when the loss is
+right (upstream now does the same thing, or the line moved into new code in a different form), acknowledge it in
+`<git-dir>/upstream-sync/ack.tsv` with a one-line reason. `compare_tests.py` flags tests that regressed, vanished or
+fail; tests upstream itself deleted or renamed are counted apart, and a vanished test with a candidate (renamed or
+re-parametrized) needs a look, not a fix.
 
 Done when the full run prints no FAIL, and every guarding test listed in `fork-features.md` ran and passed in
 `after.xml`.
 
 ### 1.6 Commit
 
-Commit the merge with `git commit` directly (the merge exception in `shine-skills:commit` step 0): subject
-`chore: merge upstream/main (<upstream short sha>)`; body with the upstream commit count, the notable resolutions,
-and the acknowledged fork-delta findings. Untracked files stay untracked.
+Write the message to `.git/MERGE_MSG` (subject `chore: merge upstream/main (<upstream short sha>)`; body with the
+upstream commit count, the dev's decisions, the notable resolutions and the verification result), then commit with
+`shine-skills:commit`, which records a merge with `git commit -S --no-edit`. Untracked files stay untracked.
 
 Then update `fork-features.md` (new features, renamed anchor paths, absorbed features) and commit it with
 `shine-skills:commit`.

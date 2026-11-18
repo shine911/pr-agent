@@ -9,7 +9,9 @@ file and directory renames. Run from the repository root, during or after confli
 --stale-paths instead lists references to directories upstream renamed (e.g. old import paths, mock.patch targets).
 
 Reports, per file:
-  - LOST: lines the fork added that no longer appear in the mapped file;
+  - LOST: lines the fork added that no longer appear in the mapped file, with no close match either;
+  - FUZZY (informational, not counted): a lost line with a close match (>= 85% similar), printed next to it; usually
+    an upstream rename such as a variable or import path, but read each one;
   - BACK: lines the fork deleted that reappeared in the mapped file;
   - files the fork added that are missing, and files the fork deleted that are back.
 
@@ -18,6 +20,7 @@ A finding is acknowledged by a TSV line in <git-dir>/upstream-sync/ack.tsv:
 where kind is LOST, BACK, MISSING_FILE or RESTORED_FILE, and "*" acknowledges every line of that kind in the
 path. Exit code 0 means every finding is acknowledged; 1 means some are not (they are printed).
 """
+import difflib
 import os
 import re
 import subprocess
@@ -26,6 +29,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 MIN_LEN = 6
+FUZZY_CUTOFF = 0.85
 TRIVIAL = re.compile(r"^[\s\-=#*`|{}\[\]()<>/.,:;'\"]*$")
 
 
@@ -121,6 +125,8 @@ def stale_paths(prefixes: list) -> int:
         for needle in (old_dir + "/", old_dir.replace("/", ".") + "."):
             hits = subprocess.run(["git", "grep", "-nF", needle, "--", ".", ":!CHANGELOG.md", ":!.claude"],
                                   capture_output=True, text=True).stdout
+            # A URL into another repository keeps its own paths.
+            hits = "".join(h + "\n" for h in hits.splitlines() if "://" not in h)
             if hits:
                 found = 1
                 print(f"Stale references to renamed {needle!r}:\n{hits}")
@@ -144,7 +150,10 @@ def main() -> int:
         return "*" in keys or line.strip() in keys
 
     findings = []  # (kind, path, line)
+    fuzzy = []  # (path, fork line, closest current line)
     for old_path, new_path, added, deleted in fork_hunks(base, old_head):
+        if (new_path or old_path).startswith(".claude/"):
+            continue  # the sync tooling itself; it changes during the run
         if new_path is None:  # fork deleted the file
             target = map_path(old_path, files, prefixes)
             if Path(target).exists():
@@ -158,17 +167,25 @@ def main() -> int:
                 findings.append(("MISSING_FILE", target, "(file the fork modified is gone; upstream deleted it?)"))
             continue
         try:
-            current = {ln.strip() for ln in Path(target).read_text(errors="replace").splitlines()}
+            current_lines = [ln.strip() for ln in Path(target).read_text(errors="replace").splitlines()]
+            current = set(current_lines)
         except IsADirectoryError:
             continue
         old_fork = {ln.strip() for ln in git("show", f"{old_head}:{new_path}").splitlines()}
         for line in added:
             if significant(line) and not (line_variants(line, prefixes) & current):
-                findings.append(("LOST", target, line.strip()))
-        for line in deleted:
-            if significant(line) and line.strip() not in old_fork and line.strip() in current:
-                findings.append(("BACK", target, line.strip()))
+                close = difflib.get_close_matches(line.strip(), current_lines, n=1, cutoff=FUZZY_CUTOFF)
+                if close:
+                    fuzzy.append((target, line.strip(), close[0]))
+                else:
+                    findings.append(("LOST", target, line.strip()))
+        findings.extend(("BACK", target, line.strip()) for line in deleted
+                        if significant(line) and line.strip() not in old_fork and line.strip() in current)
 
+    if fuzzy:
+        print("# FUZZY: fork lines whose closest current line is a near match (not counted; skim for real changes)")
+        for path, line, close in fuzzy:
+            print(f"  {path}\n    fork: {line}\n    now:  {close}")
     open_findings = [f for f in findings if not acked(*f)]
     shown = findings if show_all else open_findings
     by_file = defaultdict(list)
@@ -180,7 +197,7 @@ def main() -> int:
             mark = "ok " if (kind, path, line) not in open_findings else ""
             print(f"  {mark}{kind}: {line}")
     counts = Counter(kind for kind, _, _ in open_findings)
-    print(f"\nfindings={len(findings)} unacknowledged={len(open_findings)} {dict(counts)}")
+    print(f"\nfindings={len(findings)} unacknowledged={len(open_findings)} {dict(counts)} fuzzy={len(fuzzy)}")
     print(f"acknowledge in: {state_dir / 'ack.tsv'}")
     return 1 if open_findings else 0
 
